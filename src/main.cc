@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -30,6 +31,8 @@
 // Shaders
 #include "../shaders/test_vert.h"
 #include "../shaders/test_frag.h"
+#include "../shaders/test_vert_2.h"
+#include "../shaders/test_frag_2.h"
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -53,6 +56,8 @@ typedef enum
 {
     MD_SUCCESS,
     MD_ERROR_UNKNOWN,
+    MD_ERROR_FILE_NOT_FOUND,
+    MD_ERROR_FILE_READ_FAILURE,
     MD_ERROR_MEMORY_ALLOCATION_FAILURE,
     MD_ERROR_OBJ_LOADING_FAILURE,
     MD_ERROR_WINDOW_FAILURE,
@@ -423,6 +428,70 @@ struct Matrix4x4
 };
 #pragma endregion
 
+#pragma region [ File Loading ]
+/*
+    MdFile file = {};
+    mdOpenFile("../shaders/test.vsh", file);
+    
+    usize size = file.size;
+    void *buf = malloc(size);
+    
+    mdFileCopyToBuffer(file, buf);
+    mdCloseFile(file);
+*/
+struct MdFile
+{
+    FILE *handle;
+    usize size;
+};
+
+MdResult mdOpenFile(const char *p_filepath, const char *p_file_modes, MdFile &file)
+{
+    FILE *fp = fopen(p_filepath, p_file_modes);
+    if (fp == NULL)
+    {
+        LOG_ERROR("failed to load file at path \"%s\"\n", p_filepath);
+        return MD_ERROR_FILE_NOT_FOUND;
+    }
+
+    file.handle = fp;
+
+    fseek(fp, 0, SEEK_END);
+    file.size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    return MD_SUCCESS;
+}
+
+MdResult mdFileCopyToBuffer(MdFile file, void *p_data, int block_size = -1)
+{
+    block_size = (block_size > 0) ? block_size : file.size;
+    usize block_count = ceil(file.size / block_size);
+    usize current_size = file.size;
+
+    for (usize b=0; b<block_count; b++)
+    {
+        usize copy_size = MIN_VAL(current_size, block_size);
+        int result = fread(p_data, 1, copy_size, file.handle);
+        if (result < copy_size)
+        {
+            LOG_ERROR("failed to read entire file: %s\n", strerror(errno));
+            return MD_ERROR_FILE_READ_FAILURE;
+        }
+
+        current_size -= block_size;
+    }
+
+    return MD_SUCCESS;
+}
+
+void mdCloseFile(MdFile &file)
+{
+    fclose(file.handle);
+}
+
+#pragma endregion
+
 #pragma region [ Window ]
 enum MdWindowEvents
 {
@@ -505,12 +574,8 @@ struct MdRenderContext
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     vkb::Swapchain swapchain;
 
-    VkRenderPass render_pass = VK_NULL_HANDLE;
-    std::vector<VkFramebuffer> sw_framebuffers;
     std::vector<VkImageView> sw_image_views;
     std::vector<VkImage> sw_images;
-    
-    MdGPUTexture depth_texture;
 };
 
 struct MdRenderQueue
@@ -644,45 +709,17 @@ MdResult mdGetSwapchain(MdRenderContext &context, bool rebuild = false)
     return MD_SUCCESS;
 }
 
-VkResult mdRebuildSwapchain(MdRenderContext &context, u16 w, u16 h)
-{
-    VkResult result = VK_ERROR_UNKNOWN;
-    if (context.sw_framebuffers.size() > 0)
-    {
-        for (u32 i=0; i<context.sw_framebuffers.size(); i++)
-            vkDestroyFramebuffer(context.device, context.sw_framebuffers[i], NULL);
-    }
-
-    if (context.swapchain.swapchain != VK_NULL_HANDLE)
-        vkb::destroy_swapchain(context.swapchain);
-
-    mdGetSwapchain(context);
-
-    VkFramebufferCreateInfo fb_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fb_info.attachmentCount = 1;
-    fb_info.width = w;
-    fb_info.height = h;
-    fb_info.layers = 1;
-    fb_info.renderPass = context.render_pass;
-    
-    VkFramebuffer handle = VK_NULL_HANDLE;
-    for (u32 i=0; i<context.sw_image_views.size(); i++)
-    {
-        fb_info.attachmentCount = 1;
-        fb_info.pAttachments = &context.sw_image_views[i];
-    
-        result = vkCreateFramebuffer(context.device, &fb_info, NULL, &handle);
-        if (result != VK_SUCCESS)
-        {
-            LOG_ERROR("failed to create framebuffer");
-            return result;
-        }
-
-        context.sw_framebuffers[i] = handle;
-    }
-
-    return result;
-}
+//VkResult mdRebuildSwapchain(MdRenderContext &context, u16 w, u16 h)
+//{
+//    VkResult result = VK_ERROR_UNKNOWN;
+//
+//    if (context.swapchain.swapchain != VK_NULL_HANDLE)
+//        vkb::destroy_swapchain(context.swapchain);
+//
+//    mdGetSwapchain(context);
+//
+//    return result;
+//}
 #pragma endregion
 
 #pragma region [ Command Encoder ]
@@ -1211,6 +1248,9 @@ VkResult mdBuildDepthTexture2D( MdRenderContext &context,
     texture.format = tex_builder.image_info.format;
     texture.subresource = tex_builder.image_view_info.subresourceRange;
     
+    tex_builder.image_info.extent.width = 8192;
+    tex_builder.image_info.extent.height = 8192;
+
     VmaAllocationCreateInfo img_info = {};
     img_info.usage = VMA_MEMORY_USAGE_AUTO;
     img_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
@@ -1283,6 +1323,94 @@ VkResult mdBuildDepthTexture2D( MdRenderContext &context,
     return result;
 }
 
+VkResult mdBuildColorAttachmentTexture2D(   MdRenderContext &context, 
+                                            MdGPUTextureBuilder &tex_builder,
+                                            MdGPUAllocator &allocator,
+                                            MdGPUTexture &texture, 
+                                            MdCommandEncoder *p_command_encoder = NULL,
+                                            u32 command_buffer_index = 0)
+{
+    texture.pitch = tex_builder.pitch;
+    texture.w = tex_builder.image_info.extent.width;
+    texture.h = tex_builder.image_info.extent.height;
+    texture.format = tex_builder.image_info.format;
+    texture.subresource = tex_builder.image_view_info.subresourceRange;
+    
+    //tex_builder.image_info.extent.width = 8192;
+    //tex_builder.image_info.extent.height = 8192;
+
+    VmaAllocationCreateInfo img_info = {};
+    img_info.usage = VMA_MEMORY_USAGE_AUTO;
+    img_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+
+    VkResult result = vmaCreateImage(
+        allocator.allocator, 
+        &tex_builder.image_info, 
+        &img_info, 
+        &texture.image, 
+        &texture.allocation, 
+        &texture.allocation_info
+    );
+    VK_CHECK(result, "failed to create image allocation");
+    
+    tex_builder.image_view_info.image = texture.image;
+    result = vkCreateImageView(context.device, &tex_builder.image_view_info, NULL, &texture.image_view);
+    VK_CHECK(result, "failed to create texture image view");
+
+    result = vkCreateSampler(context.device, &tex_builder.sampler_info, NULL, &texture.sampler);
+    VK_CHECK(result, "failed to create texture image sampler");
+
+    MdCommandEncoder encoder = {};
+    VkCommandBuffer cmd_buffer = VK_NULL_HANDLE;
+    if (p_command_encoder == NULL)
+    {
+        result = mdCreateCommandEncoder(
+            context, 
+            allocator.queue.queue_index, 
+            encoder,
+            VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
+        );
+        VK_CHECK(result, "failed to create command encoder");
+
+        result = mdAllocateCommandBuffers(context, 1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, encoder);
+        VK_CHECK(result, "failed to allocate command buffers");
+        cmd_buffer = encoder.buffers[0];
+    
+        VkCommandBufferBeginInfo begin_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin_info.pInheritanceInfo = NULL;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd_buffer, &begin_info);
+    }
+    else cmd_buffer = p_command_encoder->buffers[command_buffer_index];
+    
+    mdTransitionImageLayout(
+        texture, 
+        VK_IMAGE_LAYOUT_UNDEFINED, 
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        0,
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        cmd_buffer
+    );
+    
+    if (p_command_encoder == NULL)
+    {
+        vkEndCommandBuffer(cmd_buffer);
+
+        VkSubmitInfo submit_info = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &cmd_buffer;
+
+        vkQueueSubmit(allocator.queue.queue_handle, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(allocator.queue.queue_handle);
+
+        mdDestroyCommandEncoder(context, encoder);    
+    }
+    
+    return result;
+}
+
 void mdSetTextureUsage(MdGPUTextureBuilder &builder, VkImageUsageFlags usage, VkImageAspectFlagBits image_aspect)
 {
     builder.image_view_info.subresourceRange.aspectMask = image_aspect;
@@ -1332,130 +1460,163 @@ void mdDestroyGPUAllocator(MdGPUAllocator &allocator)
 #pragma endregion
 
 #pragma region [ Render Pass ]
-
-VkResult mdCreateDefaultRenderPassAndFramebuffers(MdRenderContext &context, u16 w, u16 h, MdGPUAllocator &allocator)
+struct MdRenderTargetBuilder
 {
-    // Create depth texture
-    MdGPUTextureBuilder builder = {};
-    mdCreateTextureBuilder2D(builder, w, h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    mdSetTextureUsage(builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    VkResult result = mdBuildDepthTexture2D(context, builder, allocator, context.depth_texture);
-    VK_CHECK(result, "failed to create depth texture");
+    std::vector<VkAttachmentReference> color_references;
+    std::vector<VkAttachmentReference> depth_references;
+    std::vector<VkAttachmentDescription> descriptions;
+    std::vector<VkSubpassDependency> subpass_dependencies;
 
-    // Color attachment and subpass
-    VkAttachmentDescription attachments[2] = {};
+    std::vector<VkImageView> color_views;
+    std::vector<VkImageView> depth_views;
+    
+    u16 w, h;
+};
+
+struct MdRenderTarget
+{
+    VkRenderPass pass;
+    std::vector<VkFramebuffer> buffers;
+
+    u16 w, h;
+};
+
+void mdCreateRenderTargetBuilder(MdRenderContext &context, u16 w, u16 h, MdRenderTargetBuilder &target)
+{
+    target.w = w;
+    target.h = h;
+}
+
+void mdRenderTargetAddColorAttachment(  MdRenderTargetBuilder &builder, 
+                                        VkFormat image_format, 
+                                        VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED, 
+                                        VkImageLayout final_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+{
+    VkAttachmentDescription color_att = {};
     VkAttachmentReference color_ref = {};
-    VkSubpassDescription subpass = {};
+    VkSubpassDependency color_deps = {};
     {
-        attachments[0].format = context.swapchain.image_format;
-        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        color_att.format = image_format;
+        color_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color_att.initialLayout = initial_layout;
+        color_att.finalLayout = final_layout;
 
-        color_ref.attachment = 0;
+        color_ref.attachment = builder.descriptions.size();
         color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    
+        color_deps.srcSubpass = VK_SUBPASS_EXTERNAL;
+        color_deps.dstSubpass = 0;
+        color_deps.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        color_deps.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        color_deps.srcAccessMask = 0;
+        color_deps.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     }
+
+    builder.descriptions.push_back(color_att);
+    builder.color_references.push_back(color_ref);
+    builder.subpass_dependencies.push_back(color_deps);
+}
+
+void mdRenderTargetAddDepthAttachment(  MdRenderTargetBuilder &builder, 
+                                        VkFormat image_format, 
+                                        VkImageLayout initial_layout = VK_IMAGE_LAYOUT_UNDEFINED, 
+                                        VkImageLayout final_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+{
+    VkAttachmentDescription depth_att = {};
     VkAttachmentReference depth_ref = {};
+    VkSubpassDependency depth_deps = {};
     {
-        attachments[1].format = context.depth_texture.format;
-        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth_att.format = image_format;
+        depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.initialLayout = initial_layout;
+        depth_att.finalLayout = final_layout;
 
-        depth_ref.attachment = 1;
+        depth_ref.attachment = builder.descriptions.size();
         depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    
+        depth_deps.srcSubpass = VK_SUBPASS_EXTERNAL;
+        depth_deps.dstSubpass = 0;
+        depth_deps.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        depth_deps.dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        depth_deps.srcAccessMask = 0;
+        depth_deps.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
 
+    builder.descriptions.push_back(depth_att);
+    builder.depth_references.push_back(depth_ref);
+    builder.subpass_dependencies.push_back(depth_deps);
+}
+
+VkResult mdBuildRenderTarget(MdRenderContext &context, MdRenderTargetBuilder &builder, MdRenderTarget &target)
+{
+    target.w = builder.w;
+    target.h = builder.h;
+    
+    VkSubpassDescription subpass = {};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.flags = 0;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_ref;
-    subpass.pDepthStencilAttachment = &depth_ref;
+    subpass.colorAttachmentCount = builder.color_references.size();
+    subpass.pColorAttachments = builder.color_references.data();
+    subpass.pDepthStencilAttachment = builder.depth_references.data();
     subpass.inputAttachmentCount = 0;
     subpass.pInputAttachments = NULL;
     subpass.preserveAttachmentCount = 0;
     subpass.pPreserveAttachments = NULL;
     subpass.pResolveAttachments = NULL;
 
-    VkSubpassDependency subpass_deps[2];
-    subpass_deps[0] = {};
-    subpass_deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-    subpass_deps[0].dstSubpass = 0;
-    subpass_deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    subpass_deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    subpass_deps[0].srcAccessMask = 0;
-    subpass_deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-    subpass_deps[1] = {};
-    subpass_deps[1].srcSubpass = VK_SUBPASS_EXTERNAL;
-    subpass_deps[1].dstSubpass = 0;
-    subpass_deps[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    subpass_deps[1].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    subpass_deps[1].srcAccessMask = 0;
-    subpass_deps[1].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    
-    VkRenderPassCreateInfo rp_info {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    VkRenderPassCreateInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rp_info.subpassCount = 1;
     rp_info.pSubpasses = &subpass;
-    rp_info.dependencyCount = 2;
-    rp_info.pDependencies = subpass_deps;
-    rp_info.attachmentCount = 2;
-    rp_info.pAttachments = attachments;
+    rp_info.dependencyCount = builder.subpass_dependencies.size();
+    rp_info.pDependencies = builder.subpass_dependencies.data();
+    rp_info.attachmentCount = builder.descriptions.size();
+    rp_info.pAttachments = builder.descriptions.data();
     rp_info.flags = 0;
 
-    result = vkCreateRenderPass(context.device, &rp_info, NULL, &context.render_pass);
+    VkResult result = vkCreateRenderPass(context.device, &rp_info, NULL, &target.pass);
     VK_CHECK(result, "failed to create renderpass");
-
-    VkFramebufferCreateInfo fb_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fb_info.attachmentCount = 1;
-    fb_info.width = w;
-    fb_info.height = h;
-    fb_info.layers = 1;
-    fb_info.renderPass = context.render_pass;
-    
-    VkFramebuffer handle = VK_NULL_HANDLE;
-    context.sw_framebuffers.reserve(context.sw_image_views.size());
-
-    VkImageView views[] = {
-        VK_NULL_HANDLE,
-        context.depth_texture.image_view
-    };
-
-    for (u32 i=0; i<context.sw_image_views.size(); i++)
-    {
-        views[0] = context.sw_image_views[i];
-        fb_info.attachmentCount = 2;
-        fb_info.pAttachments = views;
-    
-        result = vkCreateFramebuffer(context.device, &fb_info, NULL, &handle);
-        if (result != VK_SUCCESS)
-        {
-            LOG_ERROR("failed to create framebuffer");
-            return result;
-        }
-
-        context.sw_framebuffers.push_back(handle);
-    }
 
     return result;
 }
 
-void mdDestroyDefaultRenderPassAndFramebuffers(MdRenderContext &context, MdGPUAllocator &allocator)
+VkResult mdRenderTargetAddFramebuffer(MdRenderContext &context, MdRenderTarget &target, const std::vector<VkImageView> &views)
 {
-    for (u32 i=0; i<context.sw_framebuffers.size(); i++)
-        if (context.sw_framebuffers[i] != VK_NULL_HANDLE)
-            vkDestroyFramebuffer(context.device, context.sw_framebuffers[i], NULL);
-    
-    vkDestroyRenderPass(context.device, context.render_pass, NULL);
-    mdDestroyTexture(allocator, context.depth_texture);
+    VkFramebufferCreateInfo fb_info {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fb_info.attachmentCount = 1;
+    fb_info.width = target.w;
+    fb_info.height = target.h;
+    fb_info.layers = 1;
+    fb_info.renderPass = target.pass;
+    fb_info.attachmentCount = views.size();
+    fb_info.pAttachments = views.data();
+
+    VkFramebuffer handle = VK_NULL_HANDLE;
+
+    VkResult result = vkCreateFramebuffer(context.device, &fb_info, NULL, &handle);
+    VK_CHECK(result, "failed to create framebuffer");
+
+    target.buffers.push_back(handle);
+    return result;
+}
+
+void mdDestroyRenderTarget(MdRenderContext &context, MdRenderTarget &target)
+{
+    if (target.buffers.size() > 0)
+    {
+        for (u32 i=0; i<target.buffers.size(); i++)
+            vkDestroyFramebuffer(context.device, target.buffers[i], NULL);
+            
+        target.buffers.clear();
+    }
+    vkDestroyRenderPass(context.device, target.pass, NULL);
 }
 #pragma endregion
 
@@ -1486,6 +1647,29 @@ VkResult mdLoadShaderSPIRV( MdRenderContext &context,
     VK_CHECK(result, "failed to create shader module");
 
     source.modules.push_back(stage_info);
+    return result;
+}
+
+VkResult mdLoadShaderSPIRVFromFile( MdRenderContext &context, 
+                                    const char *p_filepath,
+                                    VkShaderStageFlagBits stage,
+                                    MdShaderSource &source)
+{
+    MdFile file = {};
+    MdResult md_result = mdOpenFile(p_filepath, "r", file);
+    MD_CHECK_ANY(md_result, VK_ERROR_UNKNOWN, "failed to load file");
+
+    u32 *code = (u32*)malloc(file.size);
+    u32 size = (file.size / 4) * 4;
+
+    md_result = mdFileCopyToBuffer(file, code);
+    MD_CHECK_ANY(md_result, VK_ERROR_UNKNOWN, "failed to copy file to memory");
+
+    mdCloseFile(file);
+
+    VkResult result = mdLoadShaderSPIRV(context, size, code, stage, source);
+    free(code);
+
     return result;
 }
 
@@ -1960,6 +2144,7 @@ VkResult mdCreateGraphicsPipeline(  MdRenderContext &context,
                                     MdPipelineGeometryInputState *p_geometry_state,
                                     MdPipelineRasterizationState *p_raster_state,
                                     MdPipelineColorBlendState *p_color_blend_state,
+                                    MdRenderTarget &target,
                                     u32 pipeline_count, 
                                     MdPipelineState &pipeline)
 {
@@ -2028,7 +2213,7 @@ VkResult mdCreateGraphicsPipeline(  MdRenderContext &context,
     pipeline_info.basePipelineIndex = -1;
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.layout = pipeline.layout;
-    pipeline_info.renderPass = context.render_pass;
+    pipeline_info.renderPass = target.pass;
     pipeline_info.subpass = 0;
 
     pipeline_info.stageCount = shaders.modules.size();
@@ -2271,27 +2456,11 @@ int main()
         EXIT(context, window);
     }
 
-    // Shaders
-    MdShaderSource source;
-    vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_spirv), (const u32*)test_vsh_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
-    if (vk_result != VK_SUCCESS)
-    {
-        LOG_ERROR("failed to load vertes shader");
-        EXIT(context, window);
-    }
-    
-    vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_spirv), (const u32*)test_fsh_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
-    if (vk_result != VK_SUCCESS)
-    {
-        LOG_ERROR("failed to load vertes shader");
-        EXIT(context, window);
-    }
-    
     // Allocator
     MdGPUAllocator gpu_allocator = {};
     mdCreateGPUAllocator(context, gpu_allocator, graphics_queue, 1024*1024*1024);
     
-    // Texture
+    // Image texture
     SDL_Surface *img_sdl;
     img_sdl = IMG_Load("../images/test.png");
     if (img_sdl == NULL)
@@ -2309,31 +2478,39 @@ int main()
 
     MdGPUTexture texture = {};
     MdGPUTextureBuilder tex_builder = {};
-    
     mdCreateTextureBuilder2D(tex_builder, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, img_sdl->pitch);
     mdSetTextureUsage(tex_builder, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     mdSetFilterWrap(tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     mdSetMipmapOptions(tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
     mdSetMagFilters(tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
-        
     mdBuildTexture2D(context, tex_builder, gpu_allocator, texture, img_sdl->pixels);
-    SDL_FreeSurface(img_sdl);
     
+    SDL_FreeSurface(img_sdl);
+
     // Depth texture
     MdGPUTexture depth_texture = {};
     MdGPUTextureBuilder depth_tex_builder = {};
-    mdCreateTextureBuilder2D(tex_builder, window.w, window.h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    
-    // Render pass
-    vk_result = mdCreateDefaultRenderPassAndFramebuffers(context, window.w, window.h, gpu_allocator);
-    if (vk_result != VK_SUCCESS) 
-        EXIT(context, window);
+    mdCreateTextureBuilder2D(depth_tex_builder, window.w, window.h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    mdSetTextureUsage(depth_tex_builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    vk_result = mdBuildDepthTexture2D(context, depth_tex_builder, gpu_allocator, depth_texture);
+    VK_CHECK(vk_result, "failed to create depth texture");
 
+    // Color texture
+    MdGPUTexture color_texture = {};
+    MdGPUTextureBuilder color_tex_builder = {};
+    mdCreateTextureBuilder2D(color_tex_builder, window.w, window.h, context.swapchain.image_format, VK_IMAGE_ASPECT_COLOR_BIT, 4);
+    mdSetTextureUsage(color_tex_builder, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    mdSetFilterWrap(color_tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    mdSetMipmapOptions(color_tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
+    mdSetMagFilters(color_tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
+    mdBuildColorAttachmentTexture2D(context, color_tex_builder, gpu_allocator, color_texture);
+    
     // Descriptors
     MdDescriptorSetAllocator desc_allocator = {};
-    mdCreateDescriptorAllocator(1, 2, desc_allocator);
+    mdCreateDescriptorAllocator(1, 4, desc_allocator);
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_ALL, NULL, desc_allocator);
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &texture.sampler, desc_allocator);
+    mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &color_texture.sampler, desc_allocator);
     vk_result = mdCreateDescriptorSets(1, context, desc_allocator);
     if (vk_result != VK_SUCCESS)
     {
@@ -2348,7 +2525,6 @@ int main()
     usize geometry_size;
     mdLoadOBJ("../models/teapot/teapot.obj", &geometry, &geometry_size);
 
-    //geometry_size = sizeof(geometry) / VERTEX_SIZE;
     mdAllocateGPUBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, geometry_size*VERTEX_SIZE*sizeof(f32), gpu_allocator, vertex_buffer);
     mdUploadToGPUBuffer(context, gpu_allocator, 0, geometry_size*VERTEX_SIZE*sizeof(f32), geometry, vertex_buffer);
     free(geometry);
@@ -2363,76 +2539,191 @@ int main()
     // UBO
     MdGPUBuffer uniform_buffer = {};
     UBO ubo = {};
-    ubo.u_resolution[0] = window.w;
-    ubo.u_resolution[1] = window.h;
-    ubo.u_time = 0.0f;
-    ubo.u_projection = Matrix4x4::Perspective(45., (float)window.w/(float)window.h, 0.1f, 1000.0f);
-    ubo.u_view = Matrix4x4::LookAt(
-        Vector4(0,0,-1,0), 
-        Vector4(0,0,1,0), 
-        Vector4(0,1,0,0)
-    );
-    ubo.u_model = model;
-
-    mdAllocateGPUUniformBuffer(sizeof(ubo), gpu_allocator, uniform_buffer);
-    mdUploadToUniformBuffer(context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
-
-    // Vertex state
-    MdPipelineGeometryInputState geometry_state = {}; 
-    mdInitGeometryInputState(geometry_state);
-    mdGeometryInputAddVertexBinding(geometry_state, VK_VERTEX_INPUT_RATE_VERTEX, 8*sizeof(f32));
-    mdGeometryInputAddAttribute(geometry_state, 0, 0, 3, MD_F32, 0);
-    mdGeometryInputAddAttribute(geometry_state, 0, 1, 3, MD_F32, 3*sizeof(f32));
-    mdGeometryInputAddAttribute(geometry_state, 0, 2, 2, MD_F32, 6*sizeof(f32));
-    mdBuildGeometryInputState(geometry_state);
-
-    MdPipelineRasterizationState raster_state = {};
-    mdBuildDefaultRasterizationState(raster_state);
-
-    MdPipelineColorBlendState color_blend_state = {};
-    mdBuildDefaultColorBlendState(color_blend_state);
-
-    // Pipeline state
-    MdPipelineState pipeline;
-    vk_result = mdCreateGraphicsPipeline(
-        context, 
-        source, 
-        &desc_allocator,
-        &geometry_state,
-        &raster_state,
-        &color_blend_state,
-        1, 
-        pipeline
-    );
-    if (vk_result != VK_SUCCESS)
     {
-        LOG_ERROR("failed to create graphics pipeline");
-        EXIT(context, window);
+        ubo.u_resolution[0] = window.w;
+        ubo.u_resolution[1] = window.h;
+        ubo.u_time = 0.0f;
+        ubo.u_projection = Matrix4x4::Perspective(45., (float)window.w/(float)window.h, 0.1f, 1000.0f);
+        ubo.u_view = Matrix4x4::LookAt(
+            Vector4(0,0,-1,0), 
+            Vector4(0,0,1,0), 
+            Vector4(0,1,0,0)
+        );
+        ubo.u_model = model;
+
+        mdAllocateGPUUniformBuffer(sizeof(ubo), gpu_allocator, uniform_buffer);
+        mdUploadToUniformBuffer(context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
     }
 
+    // Render target A
+    MdRenderTarget render_target_A = {};
+    MdRenderTargetBuilder builder_A = {};
+    {
+        mdCreateRenderTargetBuilder(context, window.w, window.h, builder_A);
+        mdRenderTargetAddColorAttachment(builder_A, context.swapchain.image_format);
+        mdRenderTargetAddDepthAttachment(builder_A, depth_texture.format);
+
+        vk_result = mdBuildRenderTarget(context, builder_A, render_target_A);
+        VK_CHECK(vk_result, "failed to build render target");
+
+        std::vector<VkImageView> attachments;
+        attachments.push_back(color_texture.image_view);
+        attachments.push_back(depth_texture.image_view);
+        
+        vk_result = mdRenderTargetAddFramebuffer(context, render_target_A, attachments);
+        VK_CHECK(vk_result, "failed to add framebuffer");
+    }
+
+    // Pipeline A
+    MdPipelineGeometryInputState geometry_state_A = {}; 
+    MdPipelineRasterizationState raster_state_A = {};
+    MdPipelineColorBlendState color_blend_state_A = {};
+    MdPipelineState pipeline_A;
+    {    
+        // Shaders
+        MdShaderSource source;
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_spirv), (const u32*)test_vsh_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load vertex shader");
+            EXIT(context, window);
+        }
+
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_spirv), (const u32*)test_fsh_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load fragment shader");
+            EXIT(context, window);
+        }
+
+        mdInitGeometryInputState(geometry_state_A);
+        mdGeometryInputAddVertexBinding(geometry_state_A, VK_VERTEX_INPUT_RATE_VERTEX, 8*sizeof(f32));
+        mdGeometryInputAddAttribute(geometry_state_A, 0, 0, 3, MD_F32, 0);
+        mdGeometryInputAddAttribute(geometry_state_A, 0, 1, 3, MD_F32, 3*sizeof(f32));
+        mdGeometryInputAddAttribute(geometry_state_A, 0, 2, 2, MD_F32, 6*sizeof(f32));
+        mdBuildGeometryInputState(geometry_state_A);
+
+        mdBuildDefaultRasterizationState(raster_state_A);
+
+        mdBuildDefaultColorBlendState(color_blend_state_A);
+
+        vk_result = mdCreateGraphicsPipeline(
+            context, 
+            source, 
+            &desc_allocator,
+            &geometry_state_A,
+            &raster_state_A,
+            &color_blend_state_A,
+            render_target_A,
+            1, 
+            pipeline_A
+        );
+        mdDestroyShaderSource(context, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to create graphics pipeline");
+            EXIT(context, window);
+        }
+    }
+
+    // Render target B
+    MdRenderTarget render_target_B = {};
+    MdRenderTargetBuilder builder_B = {};
+    {
+        mdCreateRenderTargetBuilder(context, window.w, window.h, builder_B);
+        mdRenderTargetAddColorAttachment(builder_B, context.swapchain.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        
+        vk_result = mdBuildRenderTarget(context, builder_B, render_target_B);
+        VK_CHECK(vk_result, "failed to build render target");
+
+        std::vector<VkImageView> attachments;
+        attachments.push_back(VK_NULL_HANDLE);
+
+        for (u32 i=0; i<context.sw_image_views.size(); i++)
+        {
+            attachments[0] = context.sw_image_views[i];
+            vk_result = mdRenderTargetAddFramebuffer(context, render_target_B, attachments);
+            VK_CHECK(vk_result, "failed to add framebuffer");
+        }
+    }
+
+    // Pipeline B
+    MdPipelineGeometryInputState geometry_state_B = {}; 
+    MdPipelineRasterizationState raster_state_B = {};
+    MdPipelineColorBlendState color_blend_state_B = {};
+    MdPipelineState pipeline_B;
+    {    
+        // Shaders
+        MdShaderSource source;
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_2_spirv), (const u32*)test_vsh_2_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load vertex shader");
+            EXIT(context, window);
+        }
+
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_2_spirv), (const u32*)test_fsh_2_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load fragment shader");
+            EXIT(context, window);
+        }
+
+        mdInitGeometryInputState(geometry_state_B);
+        mdBuildGeometryInputState(geometry_state_B);
+
+        mdBuildDefaultRasterizationState(raster_state_B);
+
+        mdBuildDefaultColorBlendState(color_blend_state_B);
+
+        vk_result = mdCreateGraphicsPipeline(
+            context, 
+            source, 
+            &desc_allocator,
+            &geometry_state_B,
+            &raster_state_B,
+            &color_blend_state_B,
+            render_target_B,
+            1, 
+            pipeline_B
+        );
+        mdDestroyShaderSource(context, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to create graphics pipeline");
+            EXIT(context, window);
+        }
+    }
+
+    // Fences
     VkSemaphore image_available, render_finished;
-    VkSemaphoreCreateInfo semaphore_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-    semaphore_info.flags = 0;
-    vkCreateSemaphore(context.device, &semaphore_info, NULL, &image_available);
-    vkCreateSemaphore(context.device, &semaphore_info, NULL, &render_finished);
     VkFence in_flight;
-    VkFenceCreateInfo fence_info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    vkCreateFence(context.device, &fence_info, NULL, &in_flight);
+    {
+        VkSemaphoreCreateInfo semaphore_info = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkFenceCreateInfo fence_info = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    
+        semaphore_info.flags = 0;
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    
+        vkCreateSemaphore(context.device, &semaphore_info, NULL, &image_available);
+        vkCreateSemaphore(context.device, &semaphore_info, NULL, &render_finished);
+        vkCreateFence(context.device, &fence_info, NULL, &in_flight);
+    }
 
     // Viewport
     VkViewport viewport = {};
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    viewport.x = 0;
-    viewport.y = 0;
-    viewport.width = window.w;
-    viewport.height = window.h;
-
     VkRect2D scissor = {};
-    scissor.offset = {0,0};
-    scissor.extent = {window.w, window.h};
+    {
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        viewport.x = 0;
+        viewport.y = 0;
+        viewport.width = window.w;
+        viewport.height = window.h;
 
+        scissor.offset = {0,0};
+        scissor.extent = {window.w, window.h};
+    }
     // Main render loop
     bool quit = false;
     SDL_Event event;
@@ -2442,7 +2733,8 @@ int main()
     u32 frame_count = 0;
 
     mdUpdateDescriptorSetImage(context, desc_allocator, 1, 0, texture);
-
+    mdUpdateDescriptorSetImage(context, desc_allocator, 2, 0, color_texture);
+    
     VkDeviceSize offsets[1] = {0};
     do 
     {
@@ -2470,7 +2762,7 @@ int main()
                                 if (ow != nw || oh != nh)
                                     continue;
                                 
-                                mdRebuildSwapchain(context, nw, nh);
+                                //mdRebuildSwapchain(context, nw, nh);
                                 window.event = MD_WINDOW_UNCHANGED;
                             }
                         break;
@@ -2530,44 +2822,89 @@ int main()
             VkCommandBufferBeginInfo begin_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin_info.pInheritanceInfo = NULL;
             begin_info.flags = 0;
-            VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            rp_info.renderPass = context.render_pass;
-            rp_info.renderArea.offset = {0,0};
-            rp_info.renderArea.extent = {window.w, window.h};
-            rp_info.clearValueCount = 2;
-            rp_info.pClearValues = clear_values;
-            rp_info.framebuffer = context.sw_framebuffers[image_index];
             vkResetCommandBuffer(cmd_encoder.buffers[0], 0);
             vkBeginCommandBuffer(cmd_encoder.buffers[0], &begin_info);
-            vkCmdBeginRenderPass(cmd_encoder.buffers[0], &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-            vkCmdSetViewport(cmd_encoder.buffers[0], 0, 1, &viewport);
-            vkCmdSetScissor(cmd_encoder.buffers[0], 0, 1, &scissor);
+            // Pass A
+            {
+                VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                rp_info.renderPass = render_target_A.pass;
+                rp_info.renderArea.offset = {0,0};
+                rp_info.renderArea.extent = {window.w, window.h};
+                rp_info.clearValueCount = 2;
+                rp_info.pClearValues = clear_values;
+                rp_info.framebuffer = render_target_A.buffers[0];
+                vkCmdBeginRenderPass(cmd_encoder.buffers[0], &rp_info, VK_SUBPASS_CONTENTS_INLINE);
 
-            vkCmdBindVertexBuffers(
-                cmd_encoder.buffers[0], 
-                0, 
-                1, 
-                &vertex_buffer.buffer, offsets
-            );
-            vkCmdBindDescriptorSets(
-                cmd_encoder.buffers[0], 
-                VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                pipeline.layout, 
-                0, 
-                desc_allocator.sets.size(), 
-                desc_allocator.sets.data(), 
-                0, 
-                NULL
-            );
-            vkCmdBindPipeline(
-                cmd_encoder.buffers[0], 
-                VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                pipeline.pipeline[0]
-            );
-            vkCmdDraw(cmd_encoder.buffers[0], geometry_size, 1, 0, 0);
+                vkCmdSetViewport(cmd_encoder.buffers[0], 0, 1, &viewport);
+                vkCmdSetScissor(cmd_encoder.buffers[0], 0, 1, &scissor);
 
-            vkCmdEndRenderPass(cmd_encoder.buffers[0]);
+                vkCmdBindVertexBuffers(
+                    cmd_encoder.buffers[0], 
+                    0, 
+                    1, 
+                    &vertex_buffer.buffer, offsets
+                );
+                vkCmdBindDescriptorSets(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_A.layout, 
+                    0, 
+                    desc_allocator.sets.size(), 
+                    desc_allocator.sets.data(), 
+                    0, 
+                    NULL
+                );
+                vkCmdBindPipeline(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_A.pipeline[0]
+                );
+                vkCmdDraw(cmd_encoder.buffers[0], geometry_size, 1, 0, 0);
+                vkCmdEndRenderPass(cmd_encoder.buffers[0]);
+            }
+            // Pass B
+            {
+                mdTransitionImageLayout(
+                    color_texture, 
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+                    VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 
+                    VK_ACCESS_SHADER_READ_BIT, 
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+                    cmd_encoder.buffers[0]
+                );
+                VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                rp_info.renderPass = render_target_B.pass;
+                rp_info.renderArea.offset = {0,0};
+                rp_info.renderArea.extent = {window.w, window.h};
+                rp_info.clearValueCount = 2;
+                rp_info.pClearValues = clear_values;
+                rp_info.framebuffer = render_target_B.buffers[image_index];
+                vkCmdBeginRenderPass(cmd_encoder.buffers[0], &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+
+                vkCmdSetViewport(cmd_encoder.buffers[0], 0, 1, &viewport);
+                vkCmdSetScissor(cmd_encoder.buffers[0], 0, 1, &scissor);
+                vkCmdBindDescriptorSets(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_B.layout, 
+                    0, 
+                    desc_allocator.sets.size(), 
+                    desc_allocator.sets.data(), 
+                    0, 
+                    NULL
+                );
+                vkCmdBindPipeline(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_B.pipeline[0]
+                );
+                vkCmdDraw(cmd_encoder.buffers[0], 3, 1, 0, 0);
+                vkCmdEndRenderPass(cmd_encoder.buffers[0]);
+            }
+            
             vkEndCommandBuffer(cmd_encoder.buffers[0]);
         }
 
@@ -2613,15 +2950,18 @@ int main()
     mdDestroyTexture(gpu_allocator, texture);
 
     // Destroy render pass
-    mdDestroyDefaultRenderPassAndFramebuffers(context, gpu_allocator);
+    mdDestroyRenderTarget(context, render_target_A);
+    mdDestroyRenderTarget(context, render_target_B);
+    mdDestroyTexture(gpu_allocator, color_texture);
+    mdDestroyTexture(gpu_allocator, depth_texture);
 
     // Free GPU memory
     mdFreeGPUBuffer(gpu_allocator, uniform_buffer);
     mdFreeGPUBuffer(gpu_allocator, vertex_buffer);
     mdDestroyGPUAllocator(gpu_allocator);
 
-    mdDestroyPipelineState(context, pipeline);
-    mdDestroyShaderSource(context, source);
+    mdDestroyPipelineState(context, pipeline_A);
+    mdDestroyPipelineState(context, pipeline_B);
     mdDestroyDescriptorSetAllocator(context, desc_allocator);
     mdDestroyCommandEncoder(context, cmd_encoder);
 
