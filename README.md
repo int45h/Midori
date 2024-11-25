@@ -6,9 +6,11 @@ A simple rendering framework, Vulkan and C++, WIP
 - Vulkan
 
 ## To Build ## 
-`muon -v setup build`
-`cd build`
-`ninja`
+```
+muon -v setup build
+cd build
+ninja
+```
 
 ## To build shaders ##
 `./compile_shaders.sh`
