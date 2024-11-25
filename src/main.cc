@@ -29,6 +29,8 @@
 #include "tinyobj/tiny_obj_loader.h"
 
 // Shaders
+#include "../shaders/test_vert_shadow.h"
+#include "../shaders/test_frag_shadow.h"
 #include "../shaders/test_vert.h"
 #include "../shaders/test_frag.h"
 #include "../shaders/test_vert_2.h"
@@ -408,6 +410,19 @@ struct Matrix4x4
             0, cot_fov, 0, 0,
             0, 0, (near+far)*nf, 2*near*far*nf,
             0, 0, -1, 0
+        );
+    }
+
+    static Matrix4x4 Orthographic(float l, float r, float b, float t, float n, float f)
+    {
+        float rl = 1 / (r-l);
+        float bt = 1 / (b-t);
+        float nf = 1 / (n-f);
+        return Matrix4x4(
+            2*rl,0,0,0,
+            0,2*bt,0,0,
+            0,0,nf,0,
+            -(r+l)*rl,-(b+t)*bt,n*nf,1
         );
     }
 
@@ -1235,7 +1250,10 @@ VkResult mdBuildTexture2D(  MdRenderContext &context,
     return result;
 }
 
-VkResult mdBuildDepthTexture2D( MdRenderContext &context, 
+#define MAX_ATTACHMENT_WIDTH 8192
+#define MAX_ATTACHMENT_HEIGHT 8192
+
+VkResult mdBuildDepthAttachmentTexture2D( MdRenderContext &context, 
                                 MdGPUTextureBuilder &tex_builder,
                                 MdGPUAllocator &allocator,
                                 MdGPUTexture &texture, 
@@ -1248,23 +1266,39 @@ VkResult mdBuildDepthTexture2D( MdRenderContext &context,
     texture.format = tex_builder.image_info.format;
     texture.subresource = tex_builder.image_view_info.subresourceRange;
     
-    tex_builder.image_info.extent.width = 8192;
-    tex_builder.image_info.extent.height = 8192;
-
     VmaAllocationCreateInfo img_info = {};
-    img_info.usage = VMA_MEMORY_USAGE_AUTO;
-    img_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    img_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    img_info.flags = (
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT |
+        VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT
+    );
 
-    VkResult result = vmaCreateImage(
+    // Create a "backing image", with the maximum allowed width and height of the texture
+    VkImage backing_image = VK_NULL_HANDLE;
+    VkImageCreateInfo backing_info = tex_builder.image_info;
+    backing_info.extent.width = 8192;
+    backing_info.extent.height = 8192;
+    
+    VkResult result = vkCreateImage(context.device, &backing_info, NULL, &backing_image);
+    VK_CHECK(result, "failed to create backing image");
+
+    result = vmaAllocateMemoryForImage(
         allocator.allocator, 
-        &tex_builder.image_info, 
+        backing_image, 
         &img_info, 
-        &texture.image, 
         &texture.allocation, 
         &texture.allocation_info
     );
-    VK_CHECK(result, "failed to create image allocation");
+    VK_CHECK(result, "failed to allocate memory for texture");
     
+    // Destroy the backing image since we no longer need it, create the actual image and bind it
+    vkDestroyImage(context.device, backing_image, NULL);
+    result = vkCreateImage(context.device, &tex_builder.image_info, NULL, &texture.image);
+    VK_CHECK(result, "failed to create image");
+
+    result = vmaBindImageMemory(allocator.allocator, texture.allocation, texture.image);
+    VK_CHECK(result, "failed to bind image memory");
+
     tex_builder.image_view_info.image = texture.image;
     result = vkCreateImageView(context.device, &tex_builder.image_view_info, NULL, &texture.image_view);
     VK_CHECK(result, "failed to create texture image view");
@@ -1336,23 +1370,39 @@ VkResult mdBuildColorAttachmentTexture2D(   MdRenderContext &context,
     texture.format = tex_builder.image_info.format;
     texture.subresource = tex_builder.image_view_info.subresourceRange;
     
-    //tex_builder.image_info.extent.width = 8192;
-    //tex_builder.image_info.extent.height = 8192;
-
     VmaAllocationCreateInfo img_info = {};
-    img_info.usage = VMA_MEMORY_USAGE_AUTO;
-    img_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+    img_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    img_info.flags = (
+        VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT |
+        VMA_ALLOCATION_CREATE_CAN_ALIAS_BIT
+    );
 
-    VkResult result = vmaCreateImage(
+    // Create a "backing image", with the maximum allowed width and height of the texture
+    VkImage backing_image = VK_NULL_HANDLE;
+    VkImageCreateInfo backing_info = tex_builder.image_info;
+    backing_info.extent.width = 8192;
+    backing_info.extent.height = 8192;
+    
+    VkResult result = vkCreateImage(context.device, &backing_info, NULL, &backing_image);
+    VK_CHECK(result, "failed to create backing image");
+
+    result = vmaAllocateMemoryForImage(
         allocator.allocator, 
-        &tex_builder.image_info, 
+        backing_image, 
         &img_info, 
-        &texture.image, 
         &texture.allocation, 
         &texture.allocation_info
     );
-    VK_CHECK(result, "failed to create image allocation");
+    VK_CHECK(result, "failed to allocate memory for texture");
     
+    // Destroy the backing image since we no longer need it, create the actual image and bind it
+    vkDestroyImage(context.device, backing_image, NULL);
+    result = vkCreateImage(context.device, &tex_builder.image_info, NULL, &texture.image);
+    VK_CHECK(result, "failed to create image");
+
+    result = vmaBindImageMemory(allocator.allocator, texture.allocation, texture.image);
+    VK_CHECK(result, "failed to bind image memory");
+
     tex_builder.image_view_info.image = texture.image;
     result = vkCreateImageView(context.device, &tex_builder.image_view_info, NULL, &texture.image_view);
     VK_CHECK(result, "failed to create texture image view");
@@ -1411,6 +1461,50 @@ VkResult mdBuildColorAttachmentTexture2D(   MdRenderContext &context,
     return result;
 }
 
+VkResult mdResizeAttachmentTexture( MdRenderContext &context, 
+                                    u32 w, 
+                                    u32 h,
+                                    MdGPUTextureBuilder &tex_builder,
+                                    MdGPUAllocator &allocator,
+                                    MdGPUTexture &texture, 
+                                    MdCommandEncoder *p_command_encoder = NULL,
+                                    u32 command_buffer_index = 0)
+{
+    if (w > MAX_ATTACHMENT_WIDTH || h > MAX_ATTACHMENT_HEIGHT)
+    {
+        LOG_ERROR(
+            "width (%d) or height (%d) is greater than the maximum allowed width (%d) or height (%d)\n",
+            w, h, MAX_ATTACHMENT_WIDTH, MAX_ATTACHMENT_HEIGHT
+        );
+        return VK_ERROR_UNKNOWN;
+    }
+
+    if (texture.sampler != VK_NULL_HANDLE)
+        vkDestroySampler(context.device, texture.sampler, NULL);
+    if (texture.image_view != VK_NULL_HANDLE)
+        vkDestroyImageView(context.device, texture.image_view, NULL);
+    if (texture.image != VK_NULL_HANDLE)
+        vkDestroyImage(context.device, texture.image, NULL);
+
+    tex_builder.image_info.extent.width = w;
+    tex_builder.image_info.extent.height = h;
+
+    VkResult result = vkCreateImage(context.device, &tex_builder.image_info, NULL, &texture.image);
+    VK_CHECK(result, "failed to create image");
+
+    result = vmaBindImageMemory(allocator.allocator, texture.allocation, texture.image);
+    VK_CHECK(result, "failed to bind image memory");
+
+    tex_builder.image_view_info.image = texture.image;
+    result = vkCreateImageView(context.device, &tex_builder.image_view_info, NULL, &texture.image_view);
+    VK_CHECK(result, "failed to create texture image view");
+
+    result = vkCreateSampler(context.device, &tex_builder.sampler_info, NULL, &texture.sampler);
+    VK_CHECK(result, "failed to create texture image sampler");
+
+    return result;
+}
+
 void mdSetTextureUsage(MdGPUTextureBuilder &builder, VkImageUsageFlags usage, VkImageAspectFlagBits image_aspect)
 {
     builder.image_view_info.subresourceRange.aspectMask = image_aspect;
@@ -1427,6 +1521,11 @@ void mdSetFilterWrap(   MdGPUTextureBuilder &builder,
     builder.sampler_info.addressModeW = mode_w;
 }
 
+void mdSetTextureBorderColor(MdGPUTextureBuilder &builder, VkBorderColor color)
+{
+    builder.sampler_info.borderColor = color;
+}
+
 void mdSetMipmapOptions(MdGPUTextureBuilder &builder, VkSamplerMipmapMode mode)
 {
     builder.sampler_info.mipmapMode = mode;
@@ -1440,11 +1539,23 @@ void mdSetMagFilters(MdGPUTextureBuilder &builder, VkFilter mag_filter, VkFilter
 
 void mdDestroyTexture(MdGPUAllocator &allocator, MdGPUTexture &texture)
 {
-    if (texture.sampler != NULL)
+    if (texture.sampler != VK_NULL_HANDLE)
         vkDestroySampler(allocator.allocator->m_hDevice, texture.sampler, NULL);
-    if (texture.image_view != NULL)
+    if (texture.image_view != VK_NULL_HANDLE)
         vkDestroyImageView(allocator.allocator->m_hDevice, texture.image_view, NULL);
     vmaDestroyImage(allocator.allocator, texture.image, texture.allocation);
+}
+
+void mdDestroyAttachmentTexture(MdGPUAllocator &allocator, MdGPUTexture &texture)
+{
+    if (texture.sampler != VK_NULL_HANDLE)
+        vkDestroySampler(allocator.allocator->m_hDevice, texture.sampler, NULL);
+    if (texture.image_view != VK_NULL_HANDLE)
+        vkDestroyImageView(allocator.allocator->m_hDevice, texture.image_view, NULL);
+    if (texture.image != VK_NULL_HANDLE)
+        vkDestroyImage(allocator.allocator->m_hDevice, texture.image, NULL);
+
+    vmaFreeMemory(allocator.allocator, texture.allocation);
 }
 
 void mdDestroyGPUAllocator(MdGPUAllocator &allocator)
@@ -1533,7 +1644,7 @@ void mdRenderTargetAddDepthAttachment(  MdRenderTargetBuilder &builder,
         depth_att.format = image_format;
         depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
         depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth_att.initialLayout = initial_layout;
@@ -2294,8 +2405,8 @@ int mdInitVulkan(MdRenderContext &context, MdWindow &window)
 struct UBO
 {
     Matrix4x4 u_model;
-    Matrix4x4 u_view;
-    Matrix4x4 u_projection;
+    Matrix4x4 u_view_projection;
+    Matrix4x4 u_light_view_projection;
     f32 u_resolution[2];
     f32 u_time;
 };
@@ -2492,8 +2603,22 @@ int main()
     MdGPUTextureBuilder depth_tex_builder = {};
     mdCreateTextureBuilder2D(depth_tex_builder, window.w, window.h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
     mdSetTextureUsage(depth_tex_builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    vk_result = mdBuildDepthTexture2D(context, depth_tex_builder, gpu_allocator, depth_texture);
+    vk_result = mdBuildDepthAttachmentTexture2D(context, depth_tex_builder, gpu_allocator, depth_texture);
     VK_CHECK(vk_result, "failed to create depth texture");
+
+    // Shadow texture
+    VkExtent2D shadow_extent;
+    shadow_extent.width = 8192;
+    shadow_extent.height = 8192;
+
+    MdGPUTexture shadow_texture = {};
+    MdGPUTextureBuilder shadow_tex_builder = {};
+    mdCreateTextureBuilder2D(shadow_tex_builder, shadow_extent.width, shadow_extent.height, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    mdSetTextureUsage(shadow_tex_builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    mdSetFilterWrap(shadow_tex_builder, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER);
+    mdSetTextureBorderColor(shadow_tex_builder, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE);
+    vk_result = mdBuildDepthAttachmentTexture2D(context, shadow_tex_builder, gpu_allocator, shadow_texture);
+    VK_CHECK(vk_result, "failed to create shadow texture");
 
     // Color texture
     MdGPUTexture color_texture = {};
@@ -2511,6 +2636,8 @@ int main()
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_ALL, NULL, desc_allocator);
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &texture.sampler, desc_allocator);
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &color_texture.sampler, desc_allocator);
+    mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &shadow_texture.sampler, desc_allocator);
+    
     vk_result = mdCreateDescriptorSets(1, context, desc_allocator);
     if (vk_result != VK_SUCCESS)
     {
@@ -2529,36 +2656,115 @@ int main()
     mdUploadToGPUBuffer(context, gpu_allocator, 0, geometry_size*VERTEX_SIZE*sizeof(f32), geometry, vertex_buffer);
     free(geometry);
 
-    Matrix4x4 model(
-        1, 0, 0, 0,
-        0, -1, 0, 2,
-        0, 0, 1, -15,
-        0, 0, 0, 1
-    );
-
+    Matrix4x4 model;
+    Matrix4x4 view;
+    Matrix4x4 view_ls;
     // UBO
     MdGPUBuffer uniform_buffer = {};
     UBO ubo = {};
     {
-        ubo.u_resolution[0] = window.w;
-        ubo.u_resolution[1] = window.h;
-        ubo.u_time = 0.0f;
-        ubo.u_projection = Matrix4x4::Perspective(45., (float)window.w/(float)window.h, 0.1f, 1000.0f);
-        ubo.u_view = Matrix4x4::LookAt(
+        model = Matrix4x4(
+            1, 0, 0, 0,
+            0, 1, 0, -2,
+            0, 0, 1, -15,
+            0, 0, 0, 1
+        );
+        view = Matrix4x4::LookAt(
             Vector4(0,0,-1,0), 
             Vector4(0,0,1,0), 
             Vector4(0,1,0,0)
         );
+        view_ls = Matrix4x4::LookAt(
+            Vector4(3,0,-1,0), 
+            Vector4(0,0,1,0), 
+            Vector4(0,1,0,0)
+        );
+
+        ubo.u_resolution[0] = window.w;
+        ubo.u_resolution[1] = window.h;
+        ubo.u_time = 0.0f;
+        ubo.u_view_projection = Matrix4x4::Perspective(45., (float)window.w/(float)window.h, 0.1f, 1000.0f) * view;
+        ubo.u_light_view_projection = Matrix4x4::Orthographic(-10, 10, -10, 10, 0.1, 1000) * view_ls;
         ubo.u_model = model;
 
         mdAllocateGPUUniformBuffer(sizeof(ubo), gpu_allocator, uniform_buffer);
         mdUploadToUniformBuffer(context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
     }
 
-    // Render target A
-    MdRenderTarget render_target_A = {};
-    MdRenderTargetBuilder builder_A = {};
+    // Shadow pass
+    MdRenderTarget render_target_shadow = {};
+    MdPipelineState pipeline_shadow;
     {
+        MdRenderTargetBuilder builder_shadow = {};
+    
+        mdCreateRenderTargetBuilder(context, shadow_extent.width, shadow_extent.height, builder_shadow);
+        mdRenderTargetAddDepthAttachment(builder_shadow, depth_texture.format);
+
+        vk_result = mdBuildRenderTarget(context, builder_shadow, render_target_shadow);
+        VK_CHECK(vk_result, "failed to build render target");
+
+        std::vector<VkImageView> attachments;
+        attachments.push_back(shadow_texture.image_view);
+        
+        vk_result = mdRenderTargetAddFramebuffer(context, render_target_shadow, attachments);
+        VK_CHECK(vk_result, "failed to add framebuffer");
+
+        MdPipelineGeometryInputState geometry_state = {}; 
+        MdPipelineRasterizationState raster_state = {};
+        MdPipelineColorBlendState color_blend_state = {};
+        
+        // Shaders
+        MdShaderSource source;
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_shadow_spirv), (const u32*)test_vsh_shadow_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load vertex shader");
+            EXIT(context, window);
+        }
+
+        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_shadow_spirv), (const u32*)test_fsh_shadow_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to load fragment shader");
+            EXIT(context, window);
+        }
+
+        mdInitGeometryInputState(geometry_state);
+        mdGeometryInputAddVertexBinding(geometry_state, VK_VERTEX_INPUT_RATE_VERTEX, 8*sizeof(f32));
+        mdGeometryInputAddAttribute(geometry_state, 0, 0, 3, MD_F32, 0);
+        mdGeometryInputAddAttribute(geometry_state, 0, 1, 3, MD_F32, 3*sizeof(f32));
+        mdGeometryInputAddAttribute(geometry_state, 0, 2, 2, MD_F32, 6*sizeof(f32));
+        mdBuildGeometryInputState(geometry_state);
+
+        mdBuildDefaultRasterizationState(raster_state);
+
+        mdBuildDefaultColorBlendState(color_blend_state);
+
+        vk_result = mdCreateGraphicsPipeline(
+            context, 
+            source, 
+            &desc_allocator,
+            &geometry_state,
+            &raster_state,
+            &color_blend_state,
+            render_target_shadow,
+            1, 
+            pipeline_shadow
+        );
+        mdDestroyShaderSource(context, source);
+        if (vk_result != VK_SUCCESS)
+        {
+            LOG_ERROR("failed to create graphics pipeline");
+            EXIT(context, window);
+        }
+    }
+
+    // Render pass A
+    MdRenderTarget render_target_A = {};
+    MdPipelineState pipeline_A;
+    {   
+        MdRenderTargetBuilder builder_A = {};
+    
         mdCreateRenderTargetBuilder(context, window.w, window.h, builder_A);
         mdRenderTargetAddColorAttachment(builder_A, context.swapchain.image_format);
         mdRenderTargetAddDepthAttachment(builder_A, depth_texture.format);
@@ -2572,14 +2778,11 @@ int main()
         
         vk_result = mdRenderTargetAddFramebuffer(context, render_target_A, attachments);
         VK_CHECK(vk_result, "failed to add framebuffer");
-    }
 
-    // Pipeline A
-    MdPipelineGeometryInputState geometry_state_A = {}; 
-    MdPipelineRasterizationState raster_state_A = {};
-    MdPipelineColorBlendState color_blend_state_A = {};
-    MdPipelineState pipeline_A;
-    {    
+        MdPipelineGeometryInputState geometry_state_A = {}; 
+        MdPipelineRasterizationState raster_state_A = {};
+        MdPipelineColorBlendState color_blend_state_A = {};
+        
         // Shaders
         MdShaderSource source;
         vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_spirv), (const u32*)test_vsh_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
@@ -2626,10 +2829,12 @@ int main()
         }
     }
 
-    // Render target B
+    // Render pass B
     MdRenderTarget render_target_B = {};
-    MdRenderTargetBuilder builder_B = {};
-    {
+    MdPipelineState pipeline_B;
+    {   
+        MdRenderTargetBuilder builder_B = {};
+    
         mdCreateRenderTargetBuilder(context, window.w, window.h, builder_B);
         mdRenderTargetAddColorAttachment(builder_B, context.swapchain.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         
@@ -2645,14 +2850,11 @@ int main()
             vk_result = mdRenderTargetAddFramebuffer(context, render_target_B, attachments);
             VK_CHECK(vk_result, "failed to add framebuffer");
         }
-    }
 
-    // Pipeline B
-    MdPipelineGeometryInputState geometry_state_B = {}; 
-    MdPipelineRasterizationState raster_state_B = {};
-    MdPipelineColorBlendState color_blend_state_B = {};
-    MdPipelineState pipeline_B;
-    {    
+        MdPipelineGeometryInputState geometry_state_B = {}; 
+        MdPipelineRasterizationState raster_state_B = {};
+        MdPipelineColorBlendState color_blend_state_B = {};
+        
         // Shaders
         MdShaderSource source;
         vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_2_spirv), (const u32*)test_vsh_2_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
@@ -2713,7 +2915,10 @@ int main()
     // Viewport
     VkViewport viewport = {};
     VkRect2D scissor = {};
+    VkViewport shadow_viewport = {};
+    VkRect2D shadow_scissor = {};
     {
+        // Regular viewport
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
         viewport.x = 0;
@@ -2723,6 +2928,17 @@ int main()
 
         scissor.offset = {0,0};
         scissor.extent = {window.w, window.h};
+
+        // Shadow viewport
+        shadow_viewport.minDepth = 0.0f;
+        shadow_viewport.maxDepth = 1.0f;
+        shadow_viewport.x = 0;
+        shadow_viewport.y = 0;
+        shadow_viewport.width = shadow_extent.width;
+        shadow_viewport.height = shadow_extent.height;
+
+        shadow_scissor.offset = {0,0};
+        shadow_scissor.extent = shadow_extent;
     }
     // Main render loop
     bool quit = false;
@@ -2734,6 +2950,7 @@ int main()
 
     mdUpdateDescriptorSetImage(context, desc_allocator, 1, 0, texture);
     mdUpdateDescriptorSetImage(context, desc_allocator, 2, 0, color_texture);
+    mdUpdateDescriptorSetImage(context, desc_allocator, 3, 0, shadow_texture);
     
     VkDeviceSize offsets[1] = {0};
     do 
@@ -2816,7 +3033,7 @@ int main()
         // Command recording
         {
             VkClearValue clear_values[2];
-            clear_values[0] = {0, 1, 0, 1};
+            clear_values[0] = {.8, .8, .8, 1};
             clear_values[1].depthStencil = {1.0f, 0};
 
             VkCommandBufferBeginInfo begin_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -2825,8 +3042,58 @@ int main()
             vkResetCommandBuffer(cmd_encoder.buffers[0], 0);
             vkBeginCommandBuffer(cmd_encoder.buffers[0], &begin_info);
 
+            // Shadow pass
+            {
+                VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                rp_info.renderPass = render_target_shadow.pass;
+                rp_info.renderArea.offset = {0,0};
+                rp_info.renderArea.extent = shadow_extent;
+                rp_info.clearValueCount = 1;
+                rp_info.pClearValues = &clear_values[1];
+                rp_info.framebuffer = render_target_shadow.buffers[0];
+                vkCmdBeginRenderPass(cmd_encoder.buffers[0], &rp_info, VK_SUBPASS_CONTENTS_INLINE);
+
+                vkCmdSetViewport(cmd_encoder.buffers[0], 0, 1, &shadow_viewport);
+                vkCmdSetScissor(cmd_encoder.buffers[0], 0, 1, &shadow_scissor);
+
+                vkCmdBindVertexBuffers(
+                    cmd_encoder.buffers[0], 
+                    0, 
+                    1, 
+                    &vertex_buffer.buffer, offsets
+                );
+                vkCmdBindDescriptorSets(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_shadow.layout, 
+                    0, 
+                    desc_allocator.sets.size(), 
+                    desc_allocator.sets.data(), 
+                    0, 
+                    NULL
+                );
+                vkCmdBindPipeline(
+                    cmd_encoder.buffers[0], 
+                    VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    pipeline_shadow.pipeline[0]
+                );
+                vkCmdDraw(cmd_encoder.buffers[0], geometry_size, 1, 0, 0);
+                vkCmdEndRenderPass(cmd_encoder.buffers[0]);
+            }
+
             // Pass A
             {
+                mdTransitionImageLayout(
+                    shadow_texture, 
+                    VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, 
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 
+                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, 
+                    VK_ACCESS_SHADER_READ_BIT, 
+                    VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, 
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 
+                    cmd_encoder.buffers[0]
+                );
+
                 VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
                 rp_info.renderPass = render_target_A.pass;
                 rp_info.renderArea.offset = {0,0};
@@ -2952,8 +3219,10 @@ int main()
     // Destroy render pass
     mdDestroyRenderTarget(context, render_target_A);
     mdDestroyRenderTarget(context, render_target_B);
-    mdDestroyTexture(gpu_allocator, color_texture);
-    mdDestroyTexture(gpu_allocator, depth_texture);
+    mdDestroyRenderTarget(context, render_target_shadow);
+    mdDestroyAttachmentTexture(gpu_allocator, color_texture);
+    mdDestroyAttachmentTexture(gpu_allocator, depth_texture);
+    mdDestroyAttachmentTexture(gpu_allocator, shadow_texture);
 
     // Free GPU memory
     mdFreeGPUBuffer(gpu_allocator, uniform_buffer);
@@ -2962,6 +3231,8 @@ int main()
 
     mdDestroyPipelineState(context, pipeline_A);
     mdDestroyPipelineState(context, pipeline_B);
+    mdDestroyPipelineState(context, pipeline_shadow);
+    
     mdDestroyDescriptorSetAllocator(context, desc_allocator);
     mdDestroyCommandEncoder(context, cmd_encoder);
 
