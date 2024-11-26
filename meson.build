@@ -13,13 +13,13 @@ compiler = meson.get_compiler('cpp')
 
 deps = []
 deps += dependency('vulkan')
-deps += compiler.find_library('SDL2', required: true) #dependency('SDL2')
-deps += compiler.find_library('SDL2_image', required: true) #dependency('SDL2_image')
+deps += compiler.find_library('SDL2', required: true)
+deps += compiler.find_library('SDL2_image', required: true)
 
 args = []
 args += ['-lm', '-msse3']
 
-src = ['src/main.cc', 'src/vk_bootstrap/VkBootstrap.cpp']
+src = ['src/simd_math/simd_math_sse.cc', 'src/vk_bootstrap/VkBootstrap.cpp', 'src/main.cc']
 executable(
     'midori', 
     src,

@@ -6,10 +6,19 @@ A simple rendering framework, Vulkan and C++, WIP
 - Vulkan
 
 ## To Build ## 
+
+### Meson + Ninja ###
 ```
-muon -v setup build
+meson setup build
 cd build
 ninja
+```
+
+### Muon + Samu ###
+```
+muon setup build
+cd build
+samu
 ```
 
 ## To build shaders ##
