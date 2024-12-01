@@ -5,3 +5,4 @@ models/cube/*
 key.txt
 key.txt_pub
 build/*
+.cache/*

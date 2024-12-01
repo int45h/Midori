@@ -19,7 +19,13 @@ deps += compiler.find_library('SDL2_image', required: true)
 args = []
 args += ['-lm', '-msse3']
 
-src = ['src/simd_math/simd_math_sse.cc', 'src/file/file.cc', 'src/vk_bootstrap/VkBootstrap.cpp', 'src/main.cc']
+src = [
+    'src/simd_math/simd_math_sse.cc', 
+    'src/file/file.cc', 
+    'src/vma/vma_usage.cc', 
+    'src/renderer/renderer_vk/renderer_vk_helpers.cc', 
+    'include/vk_bootstrap/VkBootstrap.cpp', 
+    'src/main.cc']
 executable(
     'midori', 
     src,
