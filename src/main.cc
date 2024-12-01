@@ -41,69 +41,7 @@
 #define ARCH_AMD64_SSE
 #include "../include/simd_math/simd_math.h"
 
-#pragma region [ File Loading ]
-/*
-    MdFile file = {};
-    mdOpenFile("../shaders/test.vsh", file);
-    
-    usize size = file.size;
-    void *buf = malloc(size);
-    
-    mdFileCopyToBuffer(file, buf);
-    mdCloseFile(file);
-*/
-struct MdFile
-{
-    FILE *handle;
-    usize size;
-};
-
-MdResult mdOpenFile(const char *p_filepath, const char *p_file_modes, MdFile &file)
-{
-    FILE *fp = fopen(p_filepath, p_file_modes);
-    if (fp == NULL)
-    {
-        LOG_ERROR("failed to load file at path \"%s\"\n", p_filepath);
-        return MD_ERROR_FILE_NOT_FOUND;
-    }
-
-    file.handle = fp;
-
-    fseek(fp, 0, SEEK_END);
-    file.size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-
-    return MD_SUCCESS;
-}
-
-MdResult mdFileCopyToBuffer(MdFile file, void *p_data, int block_size = -1)
-{
-    block_size = (block_size > 0) ? block_size : file.size;
-    usize block_count = ceil(file.size / block_size);
-    usize current_size = file.size;
-
-    for (usize b=0; b<block_count; b++)
-    {
-        usize copy_size = MIN_VAL(current_size, block_size);
-        int result = fread(p_data, 1, copy_size, file.handle);
-        if (result < copy_size)
-        {
-            LOG_ERROR("failed to read entire file: %s\n", strerror(errno));
-            return MD_ERROR_FILE_READ_FAILURE;
-        }
-
-        current_size -= block_size;
-    }
-
-    return MD_SUCCESS;
-}
-
-void mdCloseFile(MdFile &file)
-{
-    fclose(file.handle);
-}
-
-#pragma endregion
+#include "../include/file/file.h"
 
 #pragma region [ Window ]
 enum MdWindowEvents
@@ -1064,9 +1002,7 @@ VkResult mdResizeAttachmentTexture( MdRenderContext &context,
                                     u32 h,
                                     MdGPUTextureBuilder &tex_builder,
                                     MdGPUAllocator &allocator,
-                                    MdGPUTexture &texture, 
-                                    MdCommandEncoder *p_command_encoder = NULL,
-                                    u32 command_buffer_index = 0)
+                                    MdGPUTexture &texture)
 {
     if (w > MAX_ATTACHMENT_WIDTH || h > MAX_ATTACHMENT_HEIGHT)
     {
@@ -1190,7 +1126,7 @@ struct MdRenderTarget
     u16 w, h;
 };
 
-void mdCreateRenderTargetBuilder(MdRenderContext &context, u16 w, u16 h, MdRenderTargetBuilder &target)
+void mdCreateRenderTargetBuilder(u16 w, u16 h, MdRenderTargetBuilder &target)
 {
     target.w = w;
     target.h = h;
@@ -1365,13 +1301,13 @@ VkResult mdLoadShaderSPIRVFromFile( MdRenderContext &context,
                                     MdShaderSource &source)
 {
     MdFile file = {};
-    MdResult md_result = mdOpenFile(p_filepath, "r", file);
+    MdResult md_result = mdOpenFile(p_filepath, MD_FILE_ACCESS_READ, file);
     MD_CHECK_ANY(md_result, VK_ERROR_UNKNOWN, "failed to load file");
 
     u32 *code = (u32*)malloc(file.size);
     u32 size = (file.size / 4) * 4;
 
-    md_result = mdFileCopyToBuffer(file, code);
+    md_result = mdReadFile(file, size, code);
     MD_CHECK_ANY(md_result, VK_ERROR_UNKNOWN, "failed to copy file to memory");
 
     mdCloseFile(file);
@@ -2034,7 +1970,7 @@ MdResult mdLoadOBJ(const char *p_filepath, float **pp_vertices, usize *p_size)
         for (usize i=0; i<shapes[si].mesh.num_face_vertices.size(); i++)
             vtx_count += shapes[si].mesh.num_face_vertices[i];
     
-    printf("Vertex count: %d\n", vtx_count);
+    printf("Vertex count: %zu\n", vtx_count);
 
     float *verts = (float*)malloc(vtx_count*VERTEX_SIZE*sizeof(float));
     if (verts == NULL)
@@ -2045,7 +1981,7 @@ MdResult mdLoadOBJ(const char *p_filepath, float **pp_vertices, usize *p_size)
 
     // Loop over all materials
     for (usize mi=0; mi<materials.size(); mi++)
-        printf("Texture for material[%d]: %s\n", mi, materials[mi].diffuse_texname.c_str());
+        printf("Texture for material[%zu]: %s\n", mi, materials[mi].diffuse_texname.c_str());
 
     // Loop over all vertices of all faces of all shapes in the mesh
     u64 vertex_index = 0;
@@ -2180,7 +2116,7 @@ int main()
     u64 w = img_sdl->w, h = img_sdl->h;
     u64 size = img_sdl->pitch * h;
 
-    printf("image_size: %d\n", size);
+    printf("image_size: %zu\n", size);
 
     u32 img_format = img_sdl->format->format;
     u32 desired_format = SDL_PIXELFORMAT_ABGR8888;
@@ -2295,7 +2231,7 @@ int main()
     {
         MdRenderTargetBuilder builder_shadow = {};
     
-        mdCreateRenderTargetBuilder(context, shadow_extent.width, shadow_extent.height, builder_shadow);
+        mdCreateRenderTargetBuilder(shadow_extent.width, shadow_extent.height, builder_shadow);
         mdRenderTargetAddDepthAttachment(builder_shadow, depth_texture.format);
 
         vk_result = mdBuildRenderTarget(context, builder_shadow, render_target_shadow);
@@ -2363,7 +2299,7 @@ int main()
     {   
         MdRenderTargetBuilder builder_A = {};
     
-        mdCreateRenderTargetBuilder(context, window.w, window.h, builder_A);
+        mdCreateRenderTargetBuilder(window.w, window.h, builder_A);
         mdRenderTargetAddColorAttachment(builder_A, context.swapchain.image_format);
         mdRenderTargetAddDepthAttachment(builder_A, depth_texture.format);
 
@@ -2433,7 +2369,7 @@ int main()
     {   
         MdRenderTargetBuilder builder_B = {};
     
-        mdCreateRenderTargetBuilder(context, window.w, window.h, builder_B);
+        mdCreateRenderTargetBuilder(window.w, window.h, builder_B);
         mdRenderTargetAddColorAttachment(builder_B, context.swapchain.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         
         vk_result = mdBuildRenderTarget(context, builder_B, render_target_B);
