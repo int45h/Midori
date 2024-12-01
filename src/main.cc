@@ -1,4 +1,3 @@
-#include <cstddef>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -22,19 +21,10 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "../include/tinyobj/tiny_obj_loader.h"
 
-// Shaders
-#include "../shaders/test_vert_shadow.h"
-#include "../shaders/test_frag_shadow.h"
-#include "../shaders/test_vert.h"
-#include "../shaders/test_frag.h"
-#include "../shaders/test_vert_2.h"
-#include "../shaders/test_frag_2.h"
-
 #include "../include/typedefs.h"
 
 #define ARCH_AMD64_SSE
 #include "../include/simd_math/simd_math.h"
-
 #include "../include/file/file.h"
 
 #pragma region [ Window ]
@@ -119,41 +109,47 @@ VkResult mdLoadShaderSPIRVFromFile( MdRenderContext &context,
     return result;
 }
 
+struct MdRenderer
+{
+    MdRenderContext context;
+    MdWindow window;
+    MdGPUAllocator allocator;
+};
 
-#define EXIT(context, window) {\
-    mdDestroyContext(context);\
-    mdDestroyWindow(window);\
+#define EXIT(renderer) {\
+    mdDestroyContext(renderer.context);\
+    mdDestroyWindow(renderer.window);\
     return -1;\
 }
 
-int mdInitVulkan(MdRenderContext &context, MdWindow &window)
+int mdInitVulkan(MdRenderer &renderer)
 {
     // Create window
-    MdResult result = mdCreateWindow(1920, 1080, "Midori Engine", window);
+    MdResult result = mdCreateWindow(1920, 1080, "Midori Engine", renderer.window);
     MD_CHECK_ANY(result, -1, "failed to create window");
     
     // Init render context
     std::vector<const char*> instance_extensions;
     u32 count = 0;
-    if (SDL_Vulkan_GetInstanceExtensions(window.window, &count, NULL) != SDL_TRUE)
+    if (SDL_Vulkan_GetInstanceExtensions(renderer.window.window, &count, NULL) != SDL_TRUE)
     {
         LOG_ERROR("failed to get instance extensions: %s\n", SDL_GetError());
         return -1;
     }
     instance_extensions.reserve(count);
-    SDL_Vulkan_GetInstanceExtensions(window.window, &count, instance_extensions.data());
+    SDL_Vulkan_GetInstanceExtensions(renderer.window.window, &count, instance_extensions.data());
     
-    result = mdInitContext(context, instance_extensions);
-    if (result != MD_SUCCESS) EXIT(context, window);
+    result = mdInitContext(renderer.context, instance_extensions);
+    if (result != MD_SUCCESS) EXIT(renderer);
     
-    mdGetWindowSurface(window, context.instance, &context.surface);
-    if (context.surface == VK_NULL_HANDLE) EXIT(context, window);
+    mdGetWindowSurface(renderer.window, renderer.context.instance, &renderer.context.surface);
+    if (renderer.context.surface == VK_NULL_HANDLE) EXIT(renderer);
 
-    result = mdCreateDevice(context);
-    if (result != MD_SUCCESS) EXIT(context, window);
+    result = mdCreateDevice(renderer.context);
+    if (result != MD_SUCCESS) EXIT(renderer);
 
-    result = mdGetSwapchain(context);
-    if (result != MD_SUCCESS) EXIT(context, window);
+    result = mdGetSwapchain(renderer.context);
+    if (result != MD_SUCCESS) EXIT(renderer);
 
     return 0;
 }
@@ -287,6 +283,8 @@ MdResult mdLoadOBJ(const char *p_filepath, float **pp_vertices, usize *p_size)
     return MD_SUCCESS;
 }
 
+
+
 int main()
 {
     // Init SDL
@@ -297,35 +295,34 @@ int main()
     }
     SDL_Vulkan_LoadLibrary(NULL);
     
-    MdWindow window;
-    MdRenderContext context;
-    if (mdInitVulkan(context, window) != 0)
+    MdRenderer renderer;
+    if (mdInitVulkan(renderer) != 0)
         return -1;
 
     // Get graphics queue
     MdRenderQueue graphics_queue;
-    MdResult result = mdGetQueue(VK_QUEUE_GRAPHICS_BIT, context, graphics_queue);
-    if (result != MD_SUCCESS) EXIT(context, window);
+    MdResult result = mdGetQueue(VK_QUEUE_GRAPHICS_BIT, renderer.context, graphics_queue);
+    if (result != MD_SUCCESS) EXIT(renderer);
 
     // Create command pool and buffer
     MdCommandEncoder cmd_encoder = {};
-    VkResult vk_result = mdCreateCommandEncoder(context, graphics_queue.queue_index, cmd_encoder, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);    
+    VkResult vk_result = mdCreateCommandEncoder(renderer.context, graphics_queue.queue_index, cmd_encoder, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);    
     if (vk_result != VK_SUCCESS)
     {
         LOG_ERROR("failed to create command pool");
-        EXIT(context, window);
+        EXIT(renderer);
     }
 
-    vk_result = mdAllocateCommandBuffers(context, 1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, cmd_encoder);
+    vk_result = mdAllocateCommandBuffers(renderer.context, 1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, cmd_encoder);
     if (vk_result != VK_SUCCESS)
     {
         LOG_ERROR("failed to allocate command buffers");
-        EXIT(context, window);
+        EXIT(renderer);
     }
 
     // Allocator
     MdGPUAllocator gpu_allocator = {};
-    mdCreateGPUAllocator(context, gpu_allocator, graphics_queue, 1024*1024*1024);
+    mdCreateGPUAllocator(renderer.context, gpu_allocator, graphics_queue, 1024*1024*1024);
     
     // Image texture
     SDL_Surface *img_sdl;
@@ -333,7 +330,7 @@ int main()
     if (img_sdl == NULL)
     {
         LOG_ERROR("failed to load image: %s\n", SDL_GetError());
-        EXIT(context, window);
+        EXIT(renderer);
     }
     u64 w = img_sdl->w, h = img_sdl->h;
     u64 size = img_sdl->pitch * h;
@@ -350,16 +347,16 @@ int main()
     mdSetFilterWrap(tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     mdSetMipmapOptions(tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
     mdSetMagFilters(tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
-    mdBuildTexture2D(context, tex_builder, gpu_allocator, texture, img_sdl->pixels);
+    mdBuildTexture2D(renderer.context, tex_builder, gpu_allocator, texture, img_sdl->pixels);
     
     SDL_FreeSurface(img_sdl);
 
     // Depth texture
     MdGPUTexture depth_texture = {};
     MdGPUTextureBuilder depth_tex_builder = {};
-    mdCreateTextureBuilder2D(depth_tex_builder, window.w, window.h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    mdCreateTextureBuilder2D(depth_tex_builder, renderer.window.w, renderer.window.h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_ASPECT_DEPTH_BIT);
     mdSetTextureUsage(depth_tex_builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    vk_result = mdBuildDepthAttachmentTexture2D(context, depth_tex_builder, gpu_allocator, depth_texture);
+    vk_result = mdBuildDepthAttachmentTexture2D(renderer.context, depth_tex_builder, gpu_allocator, depth_texture);
     VK_CHECK(vk_result, "failed to create depth texture");
 
     // Shadow texture
@@ -373,18 +370,18 @@ int main()
     mdSetTextureUsage(shadow_tex_builder, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     mdSetFilterWrap(shadow_tex_builder, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER);
     mdSetTextureBorderColor(shadow_tex_builder, VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE);
-    vk_result = mdBuildDepthAttachmentTexture2D(context, shadow_tex_builder, gpu_allocator, shadow_texture);
+    vk_result = mdBuildDepthAttachmentTexture2D(renderer.context, shadow_tex_builder, gpu_allocator, shadow_texture);
     VK_CHECK(vk_result, "failed to create shadow texture");
 
     // Color texture
     MdGPUTexture color_texture = {};
     MdGPUTextureBuilder color_tex_builder = {};
-    mdCreateTextureBuilder2D(color_tex_builder, window.w, window.h, context.swapchain.image_format, VK_IMAGE_ASPECT_COLOR_BIT, 4);
+    mdCreateTextureBuilder2D(color_tex_builder, renderer.window.w, renderer.window.h, renderer.context.swapchain.image_format, VK_IMAGE_ASPECT_COLOR_BIT, 4);
     mdSetTextureUsage(color_tex_builder, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     mdSetFilterWrap(color_tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     mdSetMipmapOptions(color_tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
     mdSetMagFilters(color_tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
-    mdBuildColorAttachmentTexture2D(context, color_tex_builder, gpu_allocator, color_texture);
+    mdBuildColorAttachmentTexture2D(renderer.context, color_tex_builder, gpu_allocator, color_texture);
     
     // Descriptors
     MdDescriptorSetAllocator desc_allocator = {};
@@ -394,11 +391,11 @@ int main()
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &color_texture.sampler, desc_allocator);
     mdAddDescriptorBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, &shadow_texture.sampler, desc_allocator);
     
-    vk_result = mdCreateDescriptorSets(1, context, desc_allocator);
+    vk_result = mdCreateDescriptorSets(1, renderer.context, desc_allocator);
     if (vk_result != VK_SUCCESS)
     {
         LOG_ERROR("failed to allocate descriptor sets");
-        EXIT(context, window);
+        EXIT(renderer);
     }
 
     // Vertex buffer
@@ -409,7 +406,7 @@ int main()
     mdLoadOBJ("../models/teapot/teapot.obj", &geometry, &geometry_size);
 
     mdAllocateGPUBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, geometry_size*VERTEX_SIZE*sizeof(f32), gpu_allocator, vertex_buffer);
-    mdUploadToGPUBuffer(context, gpu_allocator, 0, geometry_size*VERTEX_SIZE*sizeof(f32), geometry, vertex_buffer);
+    mdUploadToGPUBuffer(renderer.context, gpu_allocator, 0, geometry_size*VERTEX_SIZE*sizeof(f32), geometry, vertex_buffer);
     free(geometry);
 
     Matrix4x4 model;
@@ -436,15 +433,15 @@ int main()
             Vector4(0,1,0,0)
         );
 
-        ubo.u_resolution[0] = window.w;
-        ubo.u_resolution[1] = window.h;
+        ubo.u_resolution[0] = renderer.window.w;
+        ubo.u_resolution[1] = renderer.window.h;
         ubo.u_time = 0.0f;
-        ubo.u_view_projection = Matrix4x4::Perspective(45., (float)window.w/(float)window.h, 0.1f, 1000.0f) * view;
+        ubo.u_view_projection = Matrix4x4::Perspective(45., (float)renderer.window.w/(float)renderer.window.h, 0.1f, 1000.0f) * view;
         ubo.u_light_view_projection = Matrix4x4::Orthographic(-10, 10, -10, 10, 0.1, 1000) * view_ls;
         ubo.u_model = model;
 
         mdAllocateGPUUniformBuffer(sizeof(ubo), gpu_allocator, uniform_buffer);
-        mdUploadToUniformBuffer(context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
+        mdUploadToUniformBuffer(renderer.context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
     }
 
     // Shadow pass
@@ -456,13 +453,13 @@ int main()
         mdCreateRenderTargetBuilder(shadow_extent.width, shadow_extent.height, builder_shadow);
         mdRenderTargetAddDepthAttachment(builder_shadow, depth_texture.format);
 
-        vk_result = mdBuildRenderTarget(context, builder_shadow, render_target_shadow);
+        vk_result = mdBuildRenderTarget(renderer.context, builder_shadow, render_target_shadow);
         VK_CHECK(vk_result, "failed to build render target");
 
         std::vector<VkImageView> attachments;
         attachments.push_back(shadow_texture.image_view);
         
-        vk_result = mdRenderTargetAddFramebuffer(context, render_target_shadow, attachments);
+        vk_result = mdRenderTargetAddFramebuffer(renderer.context, render_target_shadow, attachments);
         VK_CHECK(vk_result, "failed to add framebuffer");
 
         MdPipelineGeometryInputState geometry_state = {}; 
@@ -471,18 +468,18 @@ int main()
         
         // Shaders
         MdShaderSource source;
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_shadow_spirv), (const u32*)test_vsh_shadow_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_shadow_vert.spv", VK_SHADER_STAGE_VERTEX_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load vertex shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_shadow_spirv), (const u32*)test_fsh_shadow_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_shadow_frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load fragment shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
         mdInitGeometryInputState(geometry_state);
@@ -497,7 +494,7 @@ int main()
         mdBuildDefaultColorBlendState(color_blend_state);
 
         vk_result = mdCreateGraphicsPipeline(
-            context, 
+            renderer.context, 
             source, 
             &desc_allocator,
             &geometry_state,
@@ -507,11 +504,11 @@ int main()
             1, 
             pipeline_shadow
         );
-        mdDestroyShaderSource(context, source);
+        mdDestroyShaderSource(renderer.context, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to create graphics pipeline");
-            EXIT(context, window);
+            EXIT(renderer);
         }
     }
 
@@ -521,18 +518,18 @@ int main()
     {   
         MdRenderTargetBuilder builder_A = {};
     
-        mdCreateRenderTargetBuilder(window.w, window.h, builder_A);
-        mdRenderTargetAddColorAttachment(builder_A, context.swapchain.image_format);
+        mdCreateRenderTargetBuilder(renderer.window.w, renderer.window.h, builder_A);
+        mdRenderTargetAddColorAttachment(builder_A, renderer.context.swapchain.image_format);
         mdRenderTargetAddDepthAttachment(builder_A, depth_texture.format);
 
-        vk_result = mdBuildRenderTarget(context, builder_A, render_target_A);
+        vk_result = mdBuildRenderTarget(renderer.context, builder_A, render_target_A);
         VK_CHECK(vk_result, "failed to build render target");
 
         std::vector<VkImageView> attachments;
         attachments.push_back(color_texture.image_view);
         attachments.push_back(depth_texture.image_view);
         
-        vk_result = mdRenderTargetAddFramebuffer(context, render_target_A, attachments);
+        vk_result = mdRenderTargetAddFramebuffer(renderer.context, render_target_A, attachments);
         VK_CHECK(vk_result, "failed to add framebuffer");
 
         MdPipelineGeometryInputState geometry_state_A = {}; 
@@ -541,18 +538,18 @@ int main()
         
         // Shaders
         MdShaderSource source;
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_spirv), (const u32*)test_vsh_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_vert.spv", VK_SHADER_STAGE_VERTEX_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load vertex shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_spirv), (const u32*)test_fsh_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load fragment shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
         mdInitGeometryInputState(geometry_state_A);
@@ -567,7 +564,7 @@ int main()
         mdBuildDefaultColorBlendState(color_blend_state_A);
 
         vk_result = mdCreateGraphicsPipeline(
-            context, 
+            renderer.context, 
             source, 
             &desc_allocator,
             &geometry_state_A,
@@ -577,11 +574,11 @@ int main()
             1, 
             pipeline_A
         );
-        mdDestroyShaderSource(context, source);
+        mdDestroyShaderSource(renderer.context, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to create graphics pipeline");
-            EXIT(context, window);
+            EXIT(renderer);
         }
     }
 
@@ -591,19 +588,19 @@ int main()
     {   
         MdRenderTargetBuilder builder_B = {};
     
-        mdCreateRenderTargetBuilder(window.w, window.h, builder_B);
-        mdRenderTargetAddColorAttachment(builder_B, context.swapchain.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        mdCreateRenderTargetBuilder(renderer.window.w, renderer.window.h, builder_B);
+        mdRenderTargetAddColorAttachment(builder_B, renderer.context.swapchain.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         
-        vk_result = mdBuildRenderTarget(context, builder_B, render_target_B);
+        vk_result = mdBuildRenderTarget(renderer.context, builder_B, render_target_B);
         VK_CHECK(vk_result, "failed to build render target");
 
         std::vector<VkImageView> attachments;
         attachments.push_back(VK_NULL_HANDLE);
 
-        for (u32 i=0; i<context.sw_image_views.size(); i++)
+        for (u32 i=0; i<renderer.context.sw_image_views.size(); i++)
         {
-            attachments[0] = context.sw_image_views[i];
-            vk_result = mdRenderTargetAddFramebuffer(context, render_target_B, attachments);
+            attachments[0] = renderer.context.sw_image_views[i];
+            vk_result = mdRenderTargetAddFramebuffer(renderer.context, render_target_B, attachments);
             VK_CHECK(vk_result, "failed to add framebuffer");
         }
 
@@ -613,18 +610,18 @@ int main()
         
         // Shaders
         MdShaderSource source;
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_vsh_2_spirv), (const u32*)test_vsh_2_spirv, VK_SHADER_STAGE_VERTEX_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_vert_2.spv", VK_SHADER_STAGE_VERTEX_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load vertex shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
-        vk_result = mdLoadShaderSPIRV(context, sizeof(test_fsh_2_spirv), (const u32*)test_fsh_2_spirv, VK_SHADER_STAGE_FRAGMENT_BIT, source);
+        vk_result = mdLoadShaderSPIRVFromFile(renderer.context, "../shaders/spv/test_frag_2.spv", VK_SHADER_STAGE_FRAGMENT_BIT, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to load fragment shader");
-            EXIT(context, window);
+            EXIT(renderer);
         }
 
         mdInitGeometryInputState(geometry_state_B);
@@ -635,7 +632,7 @@ int main()
         mdBuildDefaultColorBlendState(color_blend_state_B);
 
         vk_result = mdCreateGraphicsPipeline(
-            context, 
+            renderer.context, 
             source, 
             &desc_allocator,
             &geometry_state_B,
@@ -645,11 +642,11 @@ int main()
             1, 
             pipeline_B
         );
-        mdDestroyShaderSource(context, source);
+        mdDestroyShaderSource(renderer.context, source);
         if (vk_result != VK_SUCCESS)
         {
             LOG_ERROR("failed to create graphics pipeline");
-            EXIT(context, window);
+            EXIT(renderer);
         }
     }
 
@@ -663,9 +660,9 @@ int main()
         semaphore_info.flags = 0;
         fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     
-        vkCreateSemaphore(context.device, &semaphore_info, NULL, &image_available);
-        vkCreateSemaphore(context.device, &semaphore_info, NULL, &render_finished);
-        vkCreateFence(context.device, &fence_info, NULL, &in_flight);
+        vkCreateSemaphore(renderer.context.device, &semaphore_info, NULL, &image_available);
+        vkCreateSemaphore(renderer.context.device, &semaphore_info, NULL, &render_finished);
+        vkCreateFence(renderer.context.device, &fence_info, NULL, &in_flight);
     }
 
     // Viewport
@@ -679,11 +676,11 @@ int main()
         viewport.maxDepth = 1.0f;
         viewport.x = 0;
         viewport.y = 0;
-        viewport.width = window.w;
-        viewport.height = window.h;
+        viewport.width = renderer.window.w;
+        viewport.height = renderer.window.h;
 
         scissor.offset = {0,0};
-        scissor.extent = {window.w, window.h};
+        scissor.extent = {renderer.window.w, renderer.window.h};
 
         // Shadow viewport
         shadow_viewport.minDepth = 0.0f;
@@ -704,9 +701,9 @@ int main()
     i32 max_frames = -1;
     u32 frame_count = 0;
 
-    mdUpdateDescriptorSetImage(context, desc_allocator, 1, 0, texture);
-    mdUpdateDescriptorSetImage(context, desc_allocator, 2, 0, color_texture);
-    mdUpdateDescriptorSetImage(context, desc_allocator, 3, 0, shadow_texture);
+    mdUpdateDescriptorSetImage(renderer.context, desc_allocator, 1, 0, texture);
+    mdUpdateDescriptorSetImage(renderer.context, desc_allocator, 2, 0, color_texture);
+    mdUpdateDescriptorSetImage(renderer.context, desc_allocator, 3, 0, shadow_texture);
     
     VkDeviceSize offsets[1] = {0};
     do 
@@ -726,17 +723,17 @@ int main()
                         case SDL_WINDOWEVENT_SIZE_CHANGED:
                             printf("resized to %d, %d", event.window.data1, event.window.data2);
 
-                            if (window.event == MD_WINDOW_RESIZED)
+                            if (renderer.window.event == MD_WINDOW_RESIZED)
                             {
-                                vkDeviceWaitIdle(context.device);
+                                vkDeviceWaitIdle(renderer.context.device);
 
-                                int ow = window.w, oh = window.h, nw, nh;
-                                SDL_GetWindowSize(window.window, &nw, &nh);
+                                int ow = renderer.window.w, oh = renderer.window.h, nw, nh;
+                                SDL_GetWindowSize(renderer.window.window, &nw, &nh);
                                 if (ow != nw || oh != nh)
                                     continue;
                                 
                                 //mdRebuildSwapchain(context, nw, nh);
-                                window.event = MD_WINDOW_UNCHANGED;
+                                renderer.window.event = MD_WINDOW_UNCHANGED;
                             }
                         break;
                     }
@@ -744,14 +741,14 @@ int main()
             }
         }
 
-        vkWaitForFences(context.device, 1, &in_flight, VK_TRUE, UINT64_MAX);
+        vkWaitForFences(renderer.context.device, 1, &in_flight, VK_TRUE, UINT64_MAX);
         
         if (max_frames > -1 && frame_count++ >= max_frames)
             break;
 
         vk_result = vkAcquireNextImageKHR(
-            context.device, 
-            context.swapchain, 
+            renderer.context.device, 
+            renderer.context.swapchain, 
             UINT64_MAX, 
             image_available, 
             VK_NULL_HANDLE, 
@@ -763,20 +760,20 @@ int main()
             // Rebuild swapchain
             if (vk_result == VK_ERROR_OUT_OF_DATE_KHR)
             {
-                window.event = MD_WINDOW_RESIZED;
+                renderer.window.event = MD_WINDOW_RESIZED;
                 continue;
             }
             else break;
         }
 
-        vkResetFences(context.device, 1, &in_flight);
+        vkResetFences(renderer.context.device, 1, &in_flight);
         
         // Update descriptors
         {
             ubo.u_time = SDL_GetTicks() / 1000.0f;
-            mdUploadToUniformBuffer(context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
+            mdUploadToUniformBuffer(renderer.context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
             mdUpdateDescriptorSetUBO(
-                context, 
+                renderer.context, 
                 desc_allocator, 
                 0, 
                 0, 
@@ -853,7 +850,7 @@ int main()
                 VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
                 rp_info.renderPass = render_target_A.pass;
                 rp_info.renderArea.offset = {0,0};
-                rp_info.renderArea.extent = {window.w, window.h};
+                rp_info.renderArea.extent = {renderer.window.w, renderer.window.h};
                 rp_info.clearValueCount = 2;
                 rp_info.pClearValues = clear_values;
                 rp_info.framebuffer = render_target_A.buffers[0];
@@ -886,6 +883,7 @@ int main()
                 vkCmdDraw(cmd_encoder.buffers[0], geometry_size, 1, 0, 0);
                 vkCmdEndRenderPass(cmd_encoder.buffers[0]);
             }
+            
             // Pass B
             {
                 mdTransitionImageLayout(
@@ -901,7 +899,7 @@ int main()
                 VkRenderPassBeginInfo rp_info = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
                 rp_info.renderPass = render_target_B.pass;
                 rp_info.renderArea.offset = {0,0};
-                rp_info.renderArea.extent = {window.w, window.h};
+                rp_info.renderArea.extent = {renderer.window.w, renderer.window.h};
                 rp_info.clearValueCount = 2;
                 rp_info.pClearValues = clear_values;
                 rp_info.framebuffer = render_target_B.buffers[image_index];
@@ -949,14 +947,14 @@ int main()
             
             VkPresentInfoKHR present_info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             present_info.swapchainCount = 1;
-            present_info.pSwapchains = &context.swapchain.swapchain;
+            present_info.pSwapchains = &renderer.context.swapchain.swapchain;
             present_info.pImageIndices = &image_index;
             present_info.waitSemaphoreCount = 1;
             present_info.pWaitSemaphores = &render_finished;
             vk_result = vkQueuePresentKHR(graphics_queue.queue_handle, &present_info); 
             if (vk_result == VK_ERROR_OUT_OF_DATE_KHR)
             {
-                window.event = MD_WINDOW_RESIZED;
+                renderer.window.event = MD_WINDOW_RESIZED;
             }
         }
     }
@@ -965,17 +963,17 @@ int main()
     vkQueueWaitIdle(graphics_queue.queue_handle);
 
     // Destroy fences and semaphores
-    vkDestroySemaphore(context.device, image_available, NULL);
-    vkDestroySemaphore(context.device, render_finished, NULL);
-    vkDestroyFence(context.device, in_flight, NULL);
+    vkDestroySemaphore(renderer.context.device, image_available, NULL);
+    vkDestroySemaphore(renderer.context.device, render_finished, NULL);
+    vkDestroyFence(renderer.context.device, in_flight, NULL);
 
     // Destroy texture
     mdDestroyTexture(gpu_allocator, texture);
 
     // Destroy render pass
-    mdDestroyRenderTarget(context, render_target_A);
-    mdDestroyRenderTarget(context, render_target_B);
-    mdDestroyRenderTarget(context, render_target_shadow);
+    mdDestroyRenderTarget(renderer.context, render_target_A);
+    mdDestroyRenderTarget(renderer.context, render_target_B);
+    mdDestroyRenderTarget(renderer.context, render_target_shadow);
     mdDestroyAttachmentTexture(gpu_allocator, color_texture);
     mdDestroyAttachmentTexture(gpu_allocator, depth_texture);
     mdDestroyAttachmentTexture(gpu_allocator, shadow_texture);
@@ -985,16 +983,16 @@ int main()
     mdFreeGPUBuffer(gpu_allocator, vertex_buffer);
     mdDestroyGPUAllocator(gpu_allocator);
 
-    mdDestroyPipelineState(context, pipeline_A);
-    mdDestroyPipelineState(context, pipeline_B);
-    mdDestroyPipelineState(context, pipeline_shadow);
+    mdDestroyPipelineState(renderer.context, pipeline_A);
+    mdDestroyPipelineState(renderer.context, pipeline_B);
+    mdDestroyPipelineState(renderer.context, pipeline_shadow);
     
-    mdDestroyDescriptorSetAllocator(context, desc_allocator);
-    mdDestroyCommandEncoder(context, cmd_encoder);
+    mdDestroyDescriptorSetAllocator(renderer.context, desc_allocator);
+    mdDestroyCommandEncoder(renderer.context, cmd_encoder);
 
     // Destroy context and window
-    mdDestroyContext(context);
-    mdDestroyWindow(window);
+    mdDestroyContext(renderer.context);
+    mdDestroyWindow(renderer.window);
 
     SDL_Quit();
     return 0;

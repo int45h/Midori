@@ -20,7 +20,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
     {
         case MD_FILE_ACCESS_READ:
         {
-            if ((access | MD_FILE_ACCESS_APPEND) > 0)
+            if ((access & MD_FILE_ACCESS_APPEND) > 0)
             {
                 LOG_ERROR("MD_FILE_ACCESS_APPEND cannot be set in read-only mode");
                 return MD_ERROR_FILE_INVALID_ACCESS_ARGS;
@@ -29,7 +29,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
             file.handle = fopen(p_filepath, "r");
             if (file.handle == NULL)
             {
-                if ((access | MD_FILE_ACCESS_CREATE) == 0)
+                if ((access & MD_FILE_ACCESS_CREATE) == 0)
                     return MD_ERROR_FILE_NOT_FOUND;
                 
                 file.handle = fopen(p_filepath, "w");
@@ -52,7 +52,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
         }
         case MD_FILE_ACCESS_WRITE:
         {
-            if ((access | MD_FILE_ACCESS_CREATE) == 0)
+            if ((access & MD_FILE_ACCESS_CREATE) == 0)
             {
                 file.handle = fopen(p_filepath, "r");
                 if (file.handle == NULL)
@@ -61,7 +61,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
                 fclose(file.handle);
             }
 
-            file.handle = fopen(p_filepath, ((access | MD_FILE_ACCESS_APPEND) > 0) ? "a" : "w");
+            file.handle = fopen(p_filepath, ((access & MD_FILE_ACCESS_APPEND) > 0) ? "a" : "w");
             
             file.pointer = ftell(file.handle);
             fseek(file.handle, 0, SEEK_END);
@@ -104,7 +104,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
                 }
                 default:
                 {
-                    const char *flags = ((access | MD_FILE_ACCESS_APPEND) > 0) ? "a+" : "w+";
+                    const char *flags = ((access & MD_FILE_ACCESS_APPEND) > 0) ? "a+" : "w+";
                     file.handle = fopen(p_filepath, flags);
                     
                     file.pointer = ftell(file.handle);
@@ -189,7 +189,7 @@ MdResult mdReadFile(MdFile &file,
     usize bytes_written = 0;
     
     block_size = (block_size > 0) ? block_size : file.size;
-    usize block_count = ceil(size / block_size);
+    usize block_count = ceil((float)size / block_size);
     usize current_size = file.size;
 
     for (usize b=0; b<block_count; b++)
