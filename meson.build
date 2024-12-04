@@ -25,6 +25,7 @@ src = [
     'src/vma/vma_usage.cc', 
     'src/renderer/renderer_vk/renderer_vk_helpers.cc', 
     'include/vk_bootstrap/VkBootstrap.cpp', 
+    'src/stb_image/stb_image_usage.cc',
     'src/main.cc']
 executable(
     'midori', 

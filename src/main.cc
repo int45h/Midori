@@ -6,6 +6,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_vulkan.h>
+#include <GLFW/glfw3.h>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -13,6 +14,7 @@
 
 #include "../include/vk_bootstrap/VkBootstrap.h"
 #include "../include/vma/vma_usage.h"
+#include "../include/stb_image/stb_image_usage.h"
 
 //#define TINYGLTF_IMPLEMENTATION
 //#define STB_IMAGE_IMPLEMENTATION
@@ -282,8 +284,25 @@ MdResult mdLoadOBJ(const char *p_filepath, float **pp_vertices, usize *p_size)
 
     return MD_SUCCESS;
 }
+/*
+struct MdShader
+{
+    VkPipeline pipeline;
+    VkPipelineLayout layout;
+};
 
+struct MdMaterial
+{
+    MdShader shader;
+    void *data;
+    usize size;
+};
 
+VkResult mdCreateMaterial()
+{
+    return VK_ERROR_UNKNOWN;
+}
+*/
 
 int main()
 {
