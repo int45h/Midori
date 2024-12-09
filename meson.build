@@ -22,6 +22,7 @@ args += ['-lm', '-msse3']
 src = [
     'src/simd_math/simd_math_sse.cc', 
     'src/platform/file/file_posix.cc', 
+    'src/platform/shared_library/library_posix.cc',
     'src/vma/vma_usage.cc', 
     'src/renderer/renderer_vk/renderer_vk_helpers.cc', 
     'include/vk_bootstrap/VkBootstrap.cpp', 

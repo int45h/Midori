@@ -1,11 +1,8 @@
-#include "../../../../include/typedefs.h"
+#include "../../../include/platform/shared_library/library.h"
 
-#include <dlfcn.h>
-typedef void* MdScriptHandle;
-
-MdResult mdOpenPlugin(const char *p_filepath, MdScriptHandle *p_handle)
+MdResult mdLoadLibrary(const char *p_filepath, MdLibraryHandle *p_handle)
 {
-    MdScriptHandle handle = dlmopen(LM_ID_BASE, p_filepath, RTLD_NOW);
+    MdLibraryHandle handle = dlmopen(LM_ID_BASE, p_filepath, RTLD_NOW);
     if (handle == NULL)
     {
         LOG_ERROR("Failed to load object: %s\n",  dlerror());
@@ -16,7 +13,7 @@ MdResult mdOpenPlugin(const char *p_filepath, MdScriptHandle *p_handle)
     return MD_SUCCESS;
 }
 
-MdResult mdClosePlugin(MdScriptHandle handle)
+MdResult mdCloseLibrary(MdLibraryHandle handle)
 {
     if (dlclose(handle) != 0)
     {
@@ -27,7 +24,7 @@ MdResult mdClosePlugin(MdScriptHandle handle)
     return MD_SUCCESS;
 }
 
-MdResult mdPluginBindSymbol(MdScriptHandle handle, const char *p_symbol, void **pp_bind_point)
+MdResult mdLibraryBindSymbol(MdLibraryHandle handle, const char *p_symbol, void **pp_bind_point)
 {
     void *data = dlsym(handle, p_symbol);
     if (data == NULL)
