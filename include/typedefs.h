@@ -14,6 +14,7 @@ typedef int64_t i64;
 typedef float f32;
 typedef double f64;
 typedef size_t usize;
+typedef ssize_t ssize;
 
 #define LOG_ERROR(err, ...) fprintf(stderr, "error: " err "\n", ##__VA_ARGS__)
 #define MIN_VAL(a,b) (((a)<(b))?(a):(b))
@@ -29,9 +30,13 @@ typedef enum
     MD_ERROR_FILE_INVALID_ACCESS_ARGS,
     MD_ERROR_FILE_READ_FAILURE,
     MD_ERROR_FILE_WRITE_FAILURE,
+    MD_ERROR_PLUGIN_LOAD_FAILURE,
+    MD_ERROR_PLUGIN_BIND_FAILURE,
+    MD_ERROR_PLUGIN_CLOSE_FAILURE,
     MD_ERROR_MEMORY_ALLOCATION_FAILURE,
     MD_ERROR_OBJ_LOADING_FAILURE,
     MD_ERROR_WINDOW_FAILURE,
+    MD_ERROR_XCB_CONNECTION_FAILED,
     MD_ERROR_VULKAN_INSTANCE_FAILURE,
     MD_ERROR_VULKAN_PHYSICAL_DEVICE_FAILURE,
     MD_ERROR_VULKAN_LOGICAL_DEVICE_FAILURE,

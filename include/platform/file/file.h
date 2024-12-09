@@ -1,20 +1,35 @@
 #pragma once
 
-#include "../typedefs.h"
-enum MdFileAccessFlags
-{
-    MD_FILE_ACCESS_READ = 1,
-    MD_FILE_ACCESS_WRITE = 2,
-    MD_FILE_ACCESS_CREATE = 4,
-    MD_FILE_ACCESS_APPEND = 8,
-    MD_FILE_ACCESS_BITS_MAX_ENUM = 0xFF
-};
+#include "../../typedefs.h"
+#if defined(__GENERIC__)
+    enum MdFileAccessFlags
+    {
+        MD_FILE_ACCESS_READ_ONLY = 1,
+        MD_FILE_ACCESS_WRITE_ONLY = 2,
+        MD_FILE_ACCESS_READ_WRITE = 3,
+        MD_FILE_ACCESS_CREATE = 4,
+        MD_FILE_ACCESS_APPEND = 8
+    };
+#elif defined(__unix__)
+    #include <unistd.h>
+    #include <fcntl.h>
+    enum MdFileAccessFlags
+    {
+        MD_FILE_ACCESS_READ_ONLY = O_RDONLY,
+        MD_FILE_ACCESS_WRITE_ONLY = O_WRONLY,
+        MD_FILE_ACCESS_READ_WRITE = O_RDWR,
+        MD_FILE_ACCESS_CREATE = O_CREAT,
+        MD_FILE_ACCESS_APPEND = O_APPEND
+    };
+#endif
+
+struct MdFileDescriptor;
 
 typedef FILE* MdFileHandle;
 typedef u8 MdFileAccess;
 struct MdFile
 {
-    MdFileHandle handle;
+    MdFileDescriptor *p_descriptor;
     MdFileAccess access;
     usize pointer;
     usize size;

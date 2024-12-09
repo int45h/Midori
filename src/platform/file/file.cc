@@ -1,8 +1,13 @@
-#include "../../include/file/file.h"
+#include "../../../include/platform/file/file.h"
 
 #include <string.h>
 #include <errno.h>
 #include <math.h>
+
+struct MdFileDescriptor
+{
+    FILE *handle;
+};
 
 MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
 {
@@ -18,7 +23,7 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
     
     switch (access & 3)
     {
-        case MD_FILE_ACCESS_READ:
+        case MD_FILE_ACCESS_READ_ONLY:
         {
             if ((access & MD_FILE_ACCESS_APPEND) > 0)
             {
@@ -26,91 +31,91 @@ MdResult mdOpenFile(const char *p_filepath, MdFileAccess access, MdFile &file)
                 return MD_ERROR_FILE_INVALID_ACCESS_ARGS;
             }
 
-            file.handle = fopen(p_filepath, "r");
-            if (file.handle == NULL)
+            file.p_descriptor->handle = fopen(p_filepath, "r");
+            if (file.p_descriptor->handle == NULL)
             {
                 if ((access & MD_FILE_ACCESS_CREATE) == 0)
                     return MD_ERROR_FILE_NOT_FOUND;
                 
-                file.handle = fopen(p_filepath, "w");
-                if (file.handle == NULL)
+                file.p_descriptor->handle = fopen(p_filepath, "w");
+                if (file.p_descriptor->handle == NULL)
                 {
                     LOG_ERROR("Failed to create file \"%s\" for reading: %s", p_filepath, strerror(errno));
                     return MD_ERROR_FILE_WRITE_FAILURE;
                 }
-                fclose(file.handle);
+                fclose(file.p_descriptor->handle);
 
-                file.handle = fopen(p_filepath, "r");
+                file.p_descriptor->handle = fopen(p_filepath, "r");
                 return MD_SUCCESS;
             }
 
-            fseek(file.handle, 0, SEEK_END);
-            file.size = ftell(file.handle);
-            fseek(file.handle, 0, SEEK_SET);
+            fseek(file.p_descriptor->handle, 0, SEEK_END);
+            file.size = ftell(file.p_descriptor->handle);
+            fseek(file.p_descriptor->handle, 0, SEEK_SET);
 
             return MD_SUCCESS;
         }
-        case MD_FILE_ACCESS_WRITE:
+        case MD_FILE_ACCESS_WRITE_ONLY:
         {
             if ((access & MD_FILE_ACCESS_CREATE) == 0)
             {
-                file.handle = fopen(p_filepath, "r");
-                if (file.handle == NULL)
+                file.p_descriptor->handle = fopen(p_filepath, "r");
+                if (file.p_descriptor->handle == NULL)
                     return MD_ERROR_FILE_NOT_FOUND;
                 
-                fclose(file.handle);
+                fclose(file.p_descriptor->handle);
             }
 
-            file.handle = fopen(p_filepath, ((access & MD_FILE_ACCESS_APPEND) > 0) ? "a" : "w");
+            file.p_descriptor->handle = fopen(p_filepath, ((access & MD_FILE_ACCESS_APPEND) > 0) ? "a" : "w");
             
-            file.pointer = ftell(file.handle);
-            fseek(file.handle, 0, SEEK_END);
-            file.size = ftell(file.handle);
-            fseek(file.handle, file.pointer, SEEK_SET);
+            file.pointer = ftell(file.p_descriptor->handle);
+            fseek(file.p_descriptor->handle, 0, SEEK_END);
+            file.size = ftell(file.p_descriptor->handle);
+            fseek(file.p_descriptor->handle, file.pointer, SEEK_SET);
             
             return MD_SUCCESS;
         }
-        case MD_FILE_ACCESS_READ | MD_FILE_ACCESS_WRITE:
+        case MD_FILE_ACCESS_READ_WRITE:
         {
             switch (access & 0xC)
             {
                 case 0: 
                 {
-                    file.handle = fopen(p_filepath, "r+");
-                    if (file.handle == NULL)
+                    file.p_descriptor->handle = fopen(p_filepath, "r+");
+                    if (file.p_descriptor->handle == NULL)
                         return MD_ERROR_FILE_NOT_FOUND;
                     
-                    fseek(file.handle, 0, SEEK_END);
-                    file.size = ftell(file.handle);
-                    fseek(file.handle, 0, SEEK_SET);
+                    fseek(file.p_descriptor->handle, 0, SEEK_END);
+                    file.size = ftell(file.p_descriptor->handle);
+                    fseek(file.p_descriptor->handle, 0, SEEK_SET);
 
                     return MD_SUCCESS;
                 }
                 case MD_FILE_ACCESS_APPEND:
                 {
-                    file.handle = fopen(p_filepath, "r");
-                    if (file.handle == NULL)
+                    file.p_descriptor->handle = fopen(p_filepath, "r");
+                    if (file.p_descriptor->handle == NULL)
                         return MD_ERROR_FILE_NOT_FOUND;
                     
-                    fclose(file.handle);
-                    file.handle = fopen(p_filepath, "a+");
+                    fclose(file.p_descriptor->handle);
+                    file.p_descriptor->handle = fopen(p_filepath, "a+");
 
-                    file.pointer = ftell(file.handle);
-                    fseek(file.handle, 0, SEEK_END);
-                    file.size = ftell(file.handle);
-                    fseek(file.handle, file.pointer, SEEK_SET);
+                    file.pointer = ftell(file.p_descriptor->handle);
+                    fseek(file.p_descriptor->handle, 0, SEEK_END);
+                    file.size = ftell(file.p_descriptor->handle);
+                    fseek(file.p_descriptor->handle, file.pointer, SEEK_SET);
 
                     return MD_SUCCESS;
                 }
                 default:
                 {
                     const char *flags = ((access & MD_FILE_ACCESS_APPEND) > 0) ? "a+" : "w+";
-                    file.handle = fopen(p_filepath, flags);
+                    file.p_descriptor->handle = fopen(p_filepath, flags);
                     
-                    file.pointer = ftell(file.handle);
-                    fseek(file.handle, 0, SEEK_END);
-                    file.size = ftell(file.handle);
-                    fseek(file.handle, file.pointer, SEEK_SET);
+                    file.pointer = ftell(file.p_descriptor->handle);
+                    fseek(file.p_descriptor->handle, 0, SEEK_END);
+                    file.size = ftell(file.p_descriptor->handle);
+                    fseek(file.p_descriptor->handle, file.pointer, SEEK_SET);
                     
                     return MD_SUCCESS;
                 }
@@ -145,7 +150,7 @@ MdResult mdReadFile(MdFile &file,
     usize block_count = ceil(range / block_size);
     usize current_size = file.size;
 
-    if (fseek(file.handle, offset, SEEK_SET) != 0)
+    if (fseek(file.p_descriptor->handle, offset, SEEK_SET) != 0)
     {
         LOG_ERROR("File read error: %s\n", strerror(errno));
         return MD_ERROR_FILE_READ_FAILURE;
@@ -154,7 +159,7 @@ MdResult mdReadFile(MdFile &file,
     for (usize b=0; b<block_count; b++)
     {
         usize copy_size = MIN_VAL(current_size, block_size);
-        usize result = fread(p_dst, 1, copy_size, file.handle);
+        usize result = fread(p_dst, 1, copy_size, file.p_descriptor->handle);
         bytes_written += result;
 
         if (result < copy_size)
@@ -195,7 +200,7 @@ MdResult mdReadFile(MdFile &file,
     for (usize b=0; b<block_count; b++)
     {
         usize copy_size = MIN_VAL(current_size, block_size);
-        usize result = fread(p_dst, 1, copy_size, file.handle);
+        usize result = fread(p_dst, 1, copy_size, file.p_descriptor->handle);
         bytes_written += result;
 
         if (result < copy_size)
@@ -226,7 +231,7 @@ MdResult mdWriteFile(   MdFile &file,
     usize block_count = ceil(range / block_size);
     usize current_size = file.size;
 
-    if (fseek(file.handle, offset, SEEK_SET) != 0)
+    if (fseek(file.p_descriptor->handle, offset, SEEK_SET) != 0)
     {
         LOG_ERROR("File read error: %s\n", strerror(errno));
         return MD_ERROR_FILE_READ_FAILURE;
@@ -235,7 +240,7 @@ MdResult mdWriteFile(   MdFile &file,
     for (usize b=0; b<block_count; b++)
     {
         usize copy_size = MIN_VAL(current_size, block_size);
-        usize result = fwrite(p_src, 1, copy_size, file.handle);
+        usize result = fwrite(p_src, 1, copy_size, file.p_descriptor->handle);
         bytes_written += result;
 
         if (result < copy_size)
@@ -268,7 +273,7 @@ MdResult mdWriteFile(   MdFile &file,
     for (usize b=0; b<block_count; b++)
     {
         usize copy_size = MIN_VAL(current_size, block_size);
-        usize result = fwrite(p_src, 1, copy_size, file.handle);
+        usize result = fwrite(p_src, 1, copy_size, file.p_descriptor->handle);
         bytes_written += result;
 
         if (result < copy_size)
@@ -288,5 +293,5 @@ MdResult mdWriteFile(   MdFile &file,
 
 void mdCloseFile(MdFile &file)
 {
-    fclose(file.handle);
+    fclose(file.p_descriptor->handle);
 }

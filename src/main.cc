@@ -94,7 +94,7 @@ VkResult mdLoadShaderSPIRVFromFile( MdRenderContext &context,
                                     MdShaderSource &source)
 {
     MdFile file = {};
-    MdResult md_result = mdOpenFile(p_filepath, MD_FILE_ACCESS_READ, file);
+    MdResult md_result = mdOpenFile(p_filepath, MD_FILE_ACCESS_READ_ONLY, file);
     MD_CHECK_ANY(md_result, VK_ERROR_UNKNOWN, "failed to load file");
 
     u32 *code = (u32*)malloc(file.size);
