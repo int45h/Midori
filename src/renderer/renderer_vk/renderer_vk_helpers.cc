@@ -1,4 +1,4 @@
-#include "../../../include/renderer/renderer_vk/renderer_vk_helpers.h"
+#include <renderer_vk/renderer_vk_helpers.h>
 
 #pragma region [ Render Context ]
 MdResult mdInitContext(MdRenderContext &context, const std::vector<const char*> &instance_extensions)

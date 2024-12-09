@@ -1,4 +1,4 @@
-#include "../../../include/platform/shared_library/library.h"
+#include <shared_library/library.h>
 
 MdResult mdLoadLibrary(const char *p_filepath, MdLibraryHandle *p_handle)
 {

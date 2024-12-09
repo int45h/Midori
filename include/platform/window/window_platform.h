@@ -1,5 +1,5 @@
 #pragma once
-#include "../../typedefs.h"
+#include <typedefs.h>
 
 #if defined(__unix__)
 #include <xcb/xcb.h>

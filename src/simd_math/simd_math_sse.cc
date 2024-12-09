@@ -1,5 +1,5 @@
 #define ARCH_AMD64_SSE
-#include "../../include/simd_math/simd_math.h"
+#include <simd_math/simd_math.h>
 
 #include <immintrin.h>
 #include <math.h>

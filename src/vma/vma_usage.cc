@@ -1,3 +1,3 @@
 
 #define VMA_IMPLEMENTATION
-#include "../../include/vma/vma_usage.h"
+#include <vma/vma_usage.h>

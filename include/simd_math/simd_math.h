@@ -1,6 +1,7 @@
 #pragma once
-#include "../typedefs.h"
+#include "typedefs.h"
 
+#define ARCH_AMD64_SSE
 #ifdef ARCH_AMD64_SSE
     #include <immintrin.h>
     #define VECTOR_TYPE __m128

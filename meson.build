@@ -28,9 +28,23 @@ src = [
     'include/vk_bootstrap/VkBootstrap.cpp', 
     'src/stb_image/stb_image_usage.cc',
     'src/main.cc']
+
+include = include_directories(
+    'include', 
+    'include/platform',
+    'include/renderer',
+    'include/simd_math',
+    'include/stb_image',
+    'include/tinygltf',
+    'include/tinyobj',
+    'include/vk_bootstrap',
+    'include/vma'
+)
+
 executable(
     'midori', 
     src,
     cpp_args: args,
-    dependencies: deps
+    dependencies: deps,
+    include_directories: include
 )

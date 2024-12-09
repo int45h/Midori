@@ -1,8 +1,8 @@
 #include <vulkan/vulkan_core.h>
 
-#include "../../vk_bootstrap/VkBootstrap.h"
-#include "../../../include/typedefs.h"
-#include "../../../include/vma/vma_usage.h"
+#include <VkBootstrap.h>
+#include <typedefs.h>
+#include <vma/vma_usage.h>
 
 #pragma region [ Render Context ]
 struct MdGPUTexture

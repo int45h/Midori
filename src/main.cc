@@ -12,22 +12,22 @@
 
 #include <time.h>
 
-#include "../include/vk_bootstrap/VkBootstrap.h"
-#include "../include/vma/vma_usage.h"
-#include "../include/stb_image/stb_image_usage.h"
+#include <VkBootstrap.h>
+#include <vma_usage.h>
+#include <stb_image_usage.h>
 
 //#define TINYGLTF_IMPLEMENTATION
 //#define STB_IMAGE_IMPLEMENTATION
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
 //#include "tinygltf/tiny_gltf.h"
 #define TINYOBJLOADER_IMPLEMENTATION
-#include "../include/tinyobj/tiny_obj_loader.h"
+#include <tiny_obj_loader.h>
 
-#include "../include/typedefs.h"
+#include <typedefs.h>
 
 #define ARCH_AMD64_SSE
-#include "../include/simd_math/simd_math.h"
-#include "../include/platform/file/file.h"
+#include <simd_math/simd_math.h>
+#include <file/file.h>
 
 #pragma region [ Window ]
 enum MdWindowEvents

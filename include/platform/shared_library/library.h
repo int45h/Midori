@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../typedefs.h"
+#include <typedefs.h>
 #include "library_platform.h"
 
 MdResult mdLoadLibrary(const char *p_filepath, MdLibraryHandle *p_handle);

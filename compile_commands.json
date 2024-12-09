@@ -1,0 +1,12 @@
+[
+{
+    "directory": "/home/ctrlaltedefeat/Code Stuff/ld56",
+    "arguments": ["/usr/bin/clang++", "-Iinclude", "-Iinclude/platform", "-Iinclude/renderer", "-Iinclude/simd_math", "-Iinclude/stb_image", "-Iinclude/tinygltf", "-Iinclude/tinyobj", "-Iinclude/vk_bootstrap", "-Iinclude/vma"],
+    "file": "src/**.cc"
+},
+{
+    "directory": "/home/ctrlaltedefeat/Code Stuff/ld56",
+    "arguments": ["/usr/bin/clang++", "-Iinclude", "-Iinclude/platform", "-Iinclude/renderer", "-Iinclude/simd_math", "-Iinclude/stb_image", "-Iinclude/tinygltf", "-Iinclude/tinyobj", "-Iinclude/vk_bootstrap", "-Iinclude/vma"],
+    "file": "src/**.h"
+}
+]

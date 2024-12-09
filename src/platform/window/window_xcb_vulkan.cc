@@ -1,8 +1,8 @@
 #pragma once
 
 #define MD_USE_VULKAN
-#include "../../../include/typedefs.h"
-#include "../../../include/platform/window/window.h"
+#include <typedefs.h>
+#include <window/window.h>
 
 #include <stdlib.h>
 #include <string.h>
