@@ -393,7 +393,7 @@ VkResult mdUploadToUniformBuffer(   MdRenderContext &context,
 
 u64 mdGetTextureSize(MdGPUTexture &texture)
 {
-    return texture.h * texture.pitch;
+    return texture.h * texture.w * texture.channels;
 }
 
 void mdTransitionImageLayout(   MdGPUTexture &texture, 
@@ -431,7 +431,7 @@ void mdTransitionImageLayout(   MdGPUTexture &texture,
     );
 }
 
-void mdCreateTextureBuilder2D(MdGPUTextureBuilder &builder, u16 w, u16 h, VkFormat format, VkImageAspectFlags aspect, u16 pitch)
+void mdCreateTextureBuilder2D(MdGPUTextureBuilder &builder, u16 w, u16 h, VkFormat format, VkImageAspectFlags aspect, u16 channels)
 {
     builder.image_info.flags = 0;
     builder.image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -477,7 +477,7 @@ void mdCreateTextureBuilder2D(MdGPUTextureBuilder &builder, u16 w, u16 h, VkForm
     builder.sampler_info.magFilter = VK_FILTER_LINEAR;
     builder.sampler_info.minFilter = VK_FILTER_LINEAR;
 
-    builder.pitch = pitch;
+    builder.channels = channels;
 }
 
 VkResult mdBuildTexture2D(  MdRenderContext &context, 
@@ -488,7 +488,7 @@ VkResult mdBuildTexture2D(  MdRenderContext &context,
                             MdCommandEncoder *p_command_encoder,
                             u32 command_buffer_index)
 {
-    texture.pitch = tex_builder.pitch;
+    texture.channels = tex_builder.channels;
     texture.w = tex_builder.image_info.extent.width;
     texture.h = tex_builder.image_info.extent.height;
     texture.format = tex_builder.image_info.format;
@@ -630,7 +630,7 @@ VkResult mdBuildDepthAttachmentTexture2D( MdRenderContext &context,
                                 MdCommandEncoder *p_command_encoder,
                                 u32 command_buffer_index)
 {
-    texture.pitch = tex_builder.pitch;
+    texture.channels = tex_builder.channels;
     texture.w = tex_builder.image_info.extent.width;
     texture.h = tex_builder.image_info.extent.height;
     texture.format = tex_builder.image_info.format;
@@ -734,7 +734,7 @@ VkResult mdBuildColorAttachmentTexture2D(   MdRenderContext &context,
                                             MdCommandEncoder *p_command_encoder,
                                             u32 command_buffer_index)
 {
-    texture.pitch = tex_builder.pitch;
+    texture.channels = tex_builder.channels;
     texture.w = tex_builder.image_info.extent.width;
     texture.h = tex_builder.image_info.extent.height;
     texture.format = tex_builder.image_info.format;

@@ -13,8 +13,6 @@ compiler = meson.get_compiler('cpp')
 
 deps = []
 deps += dependency('vulkan')
-deps += compiler.find_library('SDL2', required: true)
-deps += compiler.find_library('SDL2_image', required: true)
 
 args = []
 args += ['-lm', '-msse3']
@@ -28,6 +26,16 @@ src = [
     'include/vk_bootstrap/VkBootstrap.cpp', 
     'src/stb_image/stb_image_usage.cc',
     'src/main.cc']
+
+if get_option('use_sdl') == false
+    deps += compiler.find_library('xcb', required: true)
+    src += 'src/platform/window/window_xcb_vulkan.cc'    
+else
+    deps += compiler.find_library('SDL2', required: true)
+    deps += compiler.find_library('SDL2_image', required: true)
+    src += 'src/platform/window/window_sdl_vulkan.cc'
+endif
+
 
 include = include_directories(
     'include', 

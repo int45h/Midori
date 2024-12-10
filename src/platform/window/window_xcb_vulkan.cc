@@ -1,5 +1,4 @@
-#pragma once
-
+#include <ctime>
 #define MD_USE_VULKAN
 #include <typedefs.h>
 #include <window/window.h>
@@ -22,12 +21,7 @@ struct MdWindowContext
 };
 MdWindowContext context = {};
 
-void mdWindowRegisterMousePressedCallback(MdWindow &window, MdMousePressedCallback callback){ window.context->metadata.mouse_pressed_callback = callback; }
-void mdWindowRegisterMouseReleasedCallback(MdWindow &window, MdMouseReleasedCallback callback){ window.context->metadata.mouse_released_callback = callback; }
-void mdWindowRegisterMouseMotionCallback(MdWindow &window, MdMouseMotionCallback callback){ window.context->metadata.mouse_callback = callback; }
-void mdWindowRegisterKeyboardPressedCallback(MdWindow &window, MdKeyboardPressedCallback callback){ window.context->metadata.keyboard_pressed_callback = callback; }
-void mdWindowRegisterKeyboardReleasedCallback(MdWindow &window, MdKeyboardReleasedCallback callback){ window.context->metadata.keyboard_released_callback = callback; }
-void mdWindowRegisterWindowResizedCallback(MdWindow &window, MdWindowResizeCallback callback){ window.context->metadata.window_resize_callback = callback; }
+MD_DEFINE_CALLBACKS
 
 MdResult mdInitWindowSubsystem()
 {
@@ -138,7 +132,7 @@ void mdDestroyWindow(MdWindow &window)
 }
 
 // Vulkan specific extensions
-void mdWindowQueryRequiredVulkanExtensions(char **p_extensions, u16 *size)
+void mdWindowQueryRequiredVulkanExtensions(MdWindow &window, const char **p_extensions, u16 *size)
 {
     if (p_extensions == NULL)
     {
@@ -183,8 +177,8 @@ void mdWindowQueryRequiredVulkanExtensions(char **p_extensions, u16 *size)
     p_extensions[0] = (char*)malloc(size_1 * sizeof(char));
     p_extensions[1] = (char*)malloc(size_2 * sizeof(char));
 
-    memcpy(p_extensions[0], required_extensions[0], size_1);
-    memcpy(p_extensions[1], required_extensions[1], size_2);
+    memcpy((void*)p_extensions[0], required_extensions[0], size_1);
+    memcpy((void*)p_extensions[1], required_extensions[1], size_2);
     
     free(properties);
 
@@ -200,14 +194,13 @@ VkResult mdWindowGetSurfaceKHR(MdWindow &window, VkInstance instance, VkSurfaceK
     return vkCreateXcbSurfaceKHR(instance, &create_info, NULL, p_surface);
 }
 
-void mdHandleEvent();
 bool mdWindowShouldClose(MdWindow &window)
 {
-    mdHandleEvent();
+    mdPollEvent(window);
     return window.context->metadata.closing;
 }
 
-void mdHandleEvent()
+void mdPollEvent(MdWindow &window)
 {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(context.p_conn)) != NULL)
@@ -278,4 +271,9 @@ void mdHandleEvent()
         }
     }
     free(event);
+}
+
+u32 mdGetTicks()
+{
+    return (clock() * 1000 / CLOCKS_PER_SEC);
 }

@@ -15,7 +15,7 @@ struct MdGPUTexture
     VkSampler sampler;
     VkImageSubresourceRange subresource;
     u16 w, h;
-    u16 pitch;
+    u16 channels;
 };
 
 struct MdRenderContext
@@ -117,7 +117,7 @@ struct MdGPUTextureBuilder
     VkImageCreateInfo image_info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     VkImageViewCreateInfo image_view_info = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     VkSamplerCreateInfo sampler_info = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    u16 pitch;
+    u16 channels;
 };
 
 void mdCreateTextureBuilder2D(MdGPUTextureBuilder &builder, u16 w, u16 h, VkFormat format, VkImageAspectFlags aspect, u16 pitch = 4);

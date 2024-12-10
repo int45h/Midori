@@ -3,10 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_vulkan.h>
-#include <GLFW/glfw3.h>
+//#include <SDL2/SDL.h>
+//#include <SDL2/SDL_image.h>
+//#include <SDL2/SDL_vulkan.h>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -29,64 +28,10 @@
 #include <simd_math/simd_math.h>
 #include <file/file.h>
 
-#pragma region [ Window ]
-enum MdWindowEvents
-{
-    MD_WINDOW_UNCHANGED = 0,
-    MD_WINDOW_RESIZED = 1
-};
-
-struct MdWindow
-{
-    u16 w, h;
-    char title[128];
-    SDL_Window *window;
-    MdWindowEvents event = MD_WINDOW_UNCHANGED;
-
-    MdWindow(u16 w, u16 h) : w(w), h(h) {}
-    MdWindow(u16 w, u16 h, const char *title) : w(w), h(h) 
-    {
-        usize len = MIN_VAL(128, strlen(title) + 1);
-        memcpy((void*)this->title, title, len - 1);
-        this->title[len-1] = '\0';
-    }
-    MdWindow() : w(1920), h(1080) {}
-};
-
-MdResult mdCreateWindow(u16 w, u16 h, const char *title, MdWindow &window)
-{
-    // Create window
-    window = MdWindow(w, h, title);
-    window.window = SDL_CreateWindow(window.title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, w, h, SDL_WINDOW_VULKAN);
-    if (window.window == NULL)
-    {
-        LOG_ERROR("failed to create SDL window: %s\n", SDL_GetError());
-        return MD_ERROR_WINDOW_FAILURE;
-    
-    }
-    int nw, nh;
-    SDL_GetWindowSize(window.window, &nw, &nh);
-    window.w = nw;
-    window.h = nh;
-    return MD_SUCCESS;
-}
-
-void mdDestroyWindow(MdWindow &window)
-{
-    if (window.window != NULL)
-        SDL_DestroyWindow(window.window);
-}
-
-void mdGetWindowSurface(const MdWindow &window, VkInstance instance, VkSurfaceKHR *surface)
-{
-    if (SDL_Vulkan_CreateSurface(window.window, instance, surface) != SDL_TRUE)
-    {
-        LOG_ERROR("failed to create window surface: %s\n", SDL_GetError());
-        surface = VK_NULL_HANDLE;
-    }
-}
-#pragma endregion
-#include "../include/renderer/renderer_vk/renderer_vk_helpers.h"
+#define MD_USE_SDL
+#define MD_USE_VULKAN
+#include <window/window.h>
+#include <renderer_vk/renderer_vk_helpers.h>
 
 VkResult mdLoadShaderSPIRVFromFile( MdRenderContext &context, 
                                     const char *p_filepath,
@@ -132,19 +77,15 @@ int mdInitVulkan(MdRenderer &renderer)
     
     // Init render context
     std::vector<const char*> instance_extensions;
-    u32 count = 0;
-    if (SDL_Vulkan_GetInstanceExtensions(renderer.window.window, &count, NULL) != SDL_TRUE)
-    {
-        LOG_ERROR("failed to get instance extensions: %s\n", SDL_GetError());
-        return -1;
-    }
+    u16 count = 0;
+    mdWindowQueryRequiredVulkanExtensions(renderer.window, NULL, &count);
     instance_extensions.reserve(count);
-    SDL_Vulkan_GetInstanceExtensions(renderer.window.window, &count, instance_extensions.data());
+    mdWindowQueryRequiredVulkanExtensions(renderer.window, instance_extensions.data(), &count);
     
     result = mdInitContext(renderer.context, instance_extensions);
     if (result != MD_SUCCESS) EXIT(renderer);
     
-    mdGetWindowSurface(renderer.window, renderer.context.instance, &renderer.context.surface);
+    mdWindowGetSurfaceKHR(renderer.window, renderer.context.instance, &renderer.context.surface);
     if (renderer.context.surface == VK_NULL_HANDLE) EXIT(renderer);
 
     result = mdCreateDevice(renderer.context);
@@ -303,16 +244,26 @@ VkResult mdCreateMaterial()
     return VK_ERROR_UNKNOWN;
 }
 */
+enum MdWindowEventEnum
+{
+    MD_WINDOW_RESIZED,
+    MD_WINDOW_UNCHANGED
+};
 
+struct MdWindowEvent
+{
+    MdWindowEventEnum event;
+    u16 nw, nh;
+};
+MdWindowEvent window_event = {};
 int main()
 {
     // Init SDL
-    if (SDL_Init(SDL_INIT_EVERYTHING) != 0)
+    if (mdInitWindowSubsystem() != MD_SUCCESS)
     {
-        LOG_ERROR("failed to init SDL: %s\n", SDL_GetError());
+        LOG_ERROR("failed to init window subsystem");
         return -1;
     }
-    SDL_Vulkan_LoadLibrary(NULL);
     
     MdRenderer renderer;
     if (mdInitVulkan(renderer) != 0)
@@ -344,31 +295,27 @@ int main()
     mdCreateGPUAllocator(renderer.context, gpu_allocator, graphics_queue, 1024*1024*1024);
     
     // Image texture
-    SDL_Surface *img_sdl;
-    img_sdl = IMG_Load("../images/test.png");
-    if (img_sdl == NULL)
+    int w = 0, h = 0, bpp = 0;
+    stbi_uc *img = stbi_load("../images/test.png", &w, &h, &bpp, 4);
+    if (img == NULL)
     {
-        LOG_ERROR("failed to load image: %s\n", SDL_GetError());
+        LOG_ERROR("failed to load image");
         EXIT(renderer);
     }
-    u64 w = img_sdl->w, h = img_sdl->h;
-    u64 size = img_sdl->pitch * h;
 
+    u64 size = w*h*bpp;
     printf("image_size: %zu\n", size);
-
-    u32 img_format = img_sdl->format->format;
-    u32 desired_format = SDL_PIXELFORMAT_ABGR8888;
 
     MdGPUTexture texture = {};
     MdGPUTextureBuilder tex_builder = {};
-    mdCreateTextureBuilder2D(tex_builder, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, img_sdl->pitch);
+    mdCreateTextureBuilder2D(tex_builder, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, bpp);
     mdSetTextureUsage(tex_builder, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     mdSetFilterWrap(tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     mdSetMipmapOptions(tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
     mdSetMagFilters(tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
-    mdBuildTexture2D(renderer.context, tex_builder, gpu_allocator, texture, img_sdl->pixels);
+    mdBuildTexture2D(renderer.context, tex_builder, gpu_allocator, texture, img);
     
-    SDL_FreeSurface(img_sdl);
+    //SDL_FreeSurface(img_sdl);
 
     // Depth texture
     MdGPUTexture depth_texture = {};
@@ -714,7 +661,6 @@ int main()
     }
     // Main render loop
     bool quit = false;
-    SDL_Event event;
     
     u32 image_index = 0;
     i32 max_frames = -1;
@@ -725,41 +671,20 @@ int main()
     mdUpdateDescriptorSetImage(renderer.context, desc_allocator, 3, 0, shadow_texture);
     
     VkDeviceSize offsets[1] = {0};
+    window_event.event = MD_WINDOW_UNCHANGED;
+
+    mdWindowRegisterWindowResizedCallback(renderer.window, [](u16 w, u16 h){
+        window_event.event = MD_WINDOW_RESIZED;
+        window_event.nw = w;
+        window_event.nh = h;
+    });
     do 
     {
-        // Handle events
-        while(SDL_PollEvent(&event))
+        if (window_event.event == MD_WINDOW_RESIZED)
         {
-            switch (event.type)
-            {
-                case SDL_QUIT: 
-                    quit = true; 
-                    break;
-                case SDL_WINDOWEVENT:
-                    switch (event.window.event)
-                    {
-                        case SDL_WINDOWEVENT_RESIZED:
-                        case SDL_WINDOWEVENT_SIZE_CHANGED:
-                            printf("resized to %d, %d", event.window.data1, event.window.data2);
-
-                            if (renderer.window.event == MD_WINDOW_RESIZED)
-                            {
-                                vkDeviceWaitIdle(renderer.context.device);
-
-                                int ow = renderer.window.w, oh = renderer.window.h, nw, nh;
-                                SDL_GetWindowSize(renderer.window.window, &nw, &nh);
-                                if (ow != nw || oh != nh)
-                                    continue;
-                                
-                                //mdRebuildSwapchain(context, nw, nh);
-                                renderer.window.event = MD_WINDOW_UNCHANGED;
-                            }
-                        break;
-                    }
-                    break;
-            }
+            vkDeviceWaitIdle(renderer.context.device);
+            // TO-DO: Rebuild Swapchain
         }
-
         vkWaitForFences(renderer.context.device, 1, &in_flight, VK_TRUE, UINT64_MAX);
         
         if (max_frames > -1 && frame_count++ >= max_frames)
@@ -779,7 +704,7 @@ int main()
             // Rebuild swapchain
             if (vk_result == VK_ERROR_OUT_OF_DATE_KHR)
             {
-                renderer.window.event = MD_WINDOW_RESIZED;
+                window_event.event = MD_WINDOW_RESIZED;
                 continue;
             }
             else break;
@@ -789,7 +714,7 @@ int main()
         
         // Update descriptors
         {
-            ubo.u_time = SDL_GetTicks() / 1000.0f;
+            ubo.u_time = mdGetTicks() / 1000.0f;
             mdUploadToUniformBuffer(renderer.context, gpu_allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
             mdUpdateDescriptorSetUBO(
                 renderer.context, 
@@ -973,11 +898,11 @@ int main()
             vk_result = vkQueuePresentKHR(graphics_queue.queue_handle, &present_info); 
             if (vk_result == VK_ERROR_OUT_OF_DATE_KHR)
             {
-                renderer.window.event = MD_WINDOW_RESIZED;
+                window_event.event = MD_WINDOW_RESIZED;
             }
         }
     }
-    while(!quit);
+    while(!mdWindowShouldClose(renderer.window));
 
     vkQueueWaitIdle(graphics_queue.queue_handle);
 
@@ -1013,6 +938,6 @@ int main()
     mdDestroyContext(renderer.context);
     mdDestroyWindow(renderer.window);
 
-    SDL_Quit();
+    mdDestroyWindowSubsystem();
     return 0;
 }
