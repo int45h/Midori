@@ -901,6 +901,8 @@ int main()
                 window_event.event = MD_WINDOW_RESIZED;
             }
         }
+        
+        mdPollEvent(renderer.window);
     }
     while(!mdWindowShouldClose(renderer.window));
 

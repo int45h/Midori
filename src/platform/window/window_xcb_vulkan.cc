@@ -1,4 +1,6 @@
+#include <cstdio>
 #include <ctime>
+#include <xcb/xproto.h>
 #define MD_USE_VULKAN
 #include <typedefs.h>
 #include <window/window.h>
@@ -62,6 +64,7 @@ MdResult mdCreateWindow(u16 w, u16 h, const char *title, MdWindow &window)
     u32 event_mask = XCB_CW_EVENT_MASK;
     u32 event_values[1] = {
         XCB_EVENT_MASK_EXPOSURE |
+        XCB_EVENT_MASK_STRUCTURE_NOTIFY |
         XCB_EVENT_MASK_BUTTON_PRESS | 
         XCB_EVENT_MASK_BUTTON_RELEASE |  
         XCB_EVENT_MASK_BUTTON_MOTION | 
@@ -72,7 +75,8 @@ MdResult mdCreateWindow(u16 w, u16 h, const char *title, MdWindow &window)
         XCB_EVENT_MASK_BUTTON_5_MOTION | 
         XCB_EVENT_MASK_POINTER_MOTION |
         XCB_EVENT_MASK_KEY_PRESS |
-        XCB_EVENT_MASK_KEY_RELEASE
+        XCB_EVENT_MASK_KEY_RELEASE | 
+        XCB_EVENT_MASK_RESIZE_REDIRECT
     };
     
     // Create the window
@@ -163,7 +167,7 @@ void mdWindowQueryRequiredVulkanExtensions(MdWindow &window, const char **p_exte
         
         for (u32 j=idx; j<2; j++)
         {
-            if (strncmp(properties->extensionName, required_extensions[j], 256) == 0)
+            if (strncmp(properties[i].extensionName, required_extensions[j], 256) == 0)
                 idx++;
         } 
     }
@@ -196,7 +200,6 @@ VkResult mdWindowGetSurfaceKHR(MdWindow &window, VkInstance instance, VkSurfaceK
 
 bool mdWindowShouldClose(MdWindow &window)
 {
-    mdPollEvent(window);
     return window.context->metadata.closing;
 }
 
@@ -211,13 +214,19 @@ void mdPollEvent(MdWindow &window)
             {
                 xcb_client_message_event_t *ev = (xcb_client_message_event_t*)event;
                 if (ev->data.data32[0] == context.p_closing_reply->atom)
+                {
                     context.metadata.closing = true;
+                    free(event);
+                    return;
+                }
             }
-            xcb_flush(context.p_conn);
             break;
             case XCB_EXPOSE: 
-            xcb_flush(context.p_conn);
             break;
+            case XCB_DESTROY_NOTIFY:
+                context.metadata.closing = true;
+                free(event);
+            return;
             case XCB_KEY_PRESS: 
             {
                 if (context.metadata.keyboard_pressed_callback != NULL)
@@ -226,7 +235,6 @@ void mdPollEvent(MdWindow &window)
                     context.metadata.keyboard_pressed_callback(kev->detail);
                 }
             }
-            xcb_flush(context.p_conn);
             break;
             case XCB_KEY_RELEASE: 
             {
@@ -236,7 +244,6 @@ void mdPollEvent(MdWindow &window)
                     context.metadata.keyboard_pressed_callback(kev->detail);
                 }
             }
-            xcb_flush(context.p_conn);
             break;
             case XCB_MOTION_NOTIFY: 
             {
@@ -246,7 +253,6 @@ void mdPollEvent(MdWindow &window)
                     context.metadata.mouse_callback(mev->event_x, mev->event_y);
                 }
             }
-            xcb_flush(context.p_conn);
             break;
             case XCB_BUTTON_PRESS:
             {
@@ -256,7 +262,6 @@ void mdPollEvent(MdWindow &window)
                     context.metadata.mouse_pressed_callback(mev->event_x, mev->event_y, mev->state);
                 }
             }
-            xcb_flush(context.p_conn);
             break;
             case XCB_BUTTON_RELEASE:
             {
@@ -266,7 +271,6 @@ void mdPollEvent(MdWindow &window)
                     context.metadata.mouse_released_callback(mev->event_x, mev->event_y, mev->state);
                 }
             }
-            xcb_flush(context.p_conn);
             break;
         }
     }

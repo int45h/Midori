@@ -147,7 +147,6 @@ void mdPollEvent(MdWindow &window)
 
 bool mdWindowShouldClose(MdWindow &window)
 {
-    mdPollEvent(window);
     return window.context->metadata.closing;    
 }
 
