@@ -13,3 +13,5 @@ glslang -V shaders/test.vsh -o shaders/spv/test_vert.spv -S vert
 glslang -V shaders/test.fsh -o shaders/spv/test_frag.spv -S frag
 glslang -V shaders/test2.vsh -o shaders/spv/test_vert_2.spv -S vert
 glslang -V shaders/test2.fsh -o shaders/spv/test_frag_2.spv -S frag
+glslang -V shaders/empty.vsh -o shaders/spv/empty_vsh.spv -S vert
+glslang -V shaders/empty.fsh -o shaders/spv/empty_fsh.spv -S frag

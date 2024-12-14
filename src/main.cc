@@ -462,6 +462,7 @@ int main()
         vk_result = mdCreateGraphicsPipeline(
             renderer.context, 
             source, 
+            1,
             &desc_allocator,
             &geometry_state,
             &raster_state,
@@ -532,6 +533,7 @@ int main()
         vk_result = mdCreateGraphicsPipeline(
             renderer.context, 
             source, 
+            1,
             &desc_allocator,
             &geometry_state_A,
             &raster_state_A,
@@ -600,6 +602,7 @@ int main()
         vk_result = mdCreateGraphicsPipeline(
             renderer.context, 
             source, 
+            1,
             &desc_allocator,
             &geometry_state_B,
             &raster_state_B,

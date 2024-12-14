@@ -1,4 +1,5 @@
 #include <renderer_vk/renderer_vk_helpers.h>
+#include <vulkan/vulkan_core.h>
 
 #pragma region [ Render Context ]
 MdResult mdInitContext(MdRenderContext &context, const std::vector<const char*> &instance_extensions)
@@ -1522,6 +1523,7 @@ void mdBuildDefaultColorBlendState(MdPipelineColorBlendState &stage)
 #pragma region [ Pipeline ]
 VkResult mdCreateGraphicsPipeline(  MdRenderContext &context, 
                                     MdShaderSource &shaders, 
+                                    usize desc_count,
                                     MdDescriptorSetAllocator *p_descriptor_sets,
                                     MdPipelineGeometryInputState *p_geometry_state,
                                     MdPipelineRasterizationState *p_raster_state,
@@ -1534,15 +1536,22 @@ VkResult mdCreateGraphicsPipeline(  MdRenderContext &context,
 
     VkPipelineLayoutCreateInfo layout_info = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout_info.flags = 0;
-    if (p_descriptor_sets == NULL)
+    std::vector<VkDescriptorSetLayout> layouts;
+    
+    if (p_descriptor_sets != NULL)
     {
-        layout_info.setLayoutCount = 0;
-        layout_info.pSetLayouts = NULL;
+        layout_info.setLayoutCount = desc_count;
+        layouts.reserve(desc_count);
+        
+        for (usize i=0; i<desc_count; i++)
+            layouts.push_back(p_descriptor_sets[i].layout);
+        
+        layout_info.pSetLayouts = layouts.data();
     }
     else
     {
-        layout_info.setLayoutCount = 1;
-        layout_info.pSetLayouts = &p_descriptor_sets->layout;
+        layout_info.setLayoutCount = 0;
+        layout_info.pSetLayouts = NULL;
     }
     
     layout_info.pushConstantRangeCount = 0;

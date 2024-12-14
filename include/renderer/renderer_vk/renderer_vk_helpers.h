@@ -349,6 +349,7 @@ struct MdPipelineState
 
 VkResult mdCreateGraphicsPipeline(  MdRenderContext &context, 
                                     MdShaderSource &shaders, 
+                                    usize desc_count,
                                     MdDescriptorSetAllocator *p_descriptor_sets,
                                     MdPipelineGeometryInputState *p_geometry_state,
                                     MdPipelineRasterizationState *p_raster_state,

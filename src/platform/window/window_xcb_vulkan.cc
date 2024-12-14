@@ -20,6 +20,9 @@ struct MdWindowContext
     int display_index;
 
     MdWindowContextData metadata;
+
+    // Timestamp here because why not
+    clock_t timestamp;
 };
 MdWindowContext context = {};
 
@@ -126,6 +129,7 @@ MdResult mdCreateWindow(u16 w, u16 h, const char *title, MdWindow &window)
     // Flush events, set window context 
     xcb_flush(context.p_conn);
     window.context = &context;
+    context.timestamp = clock();
 
     return MD_SUCCESS;
 }
@@ -279,5 +283,5 @@ void mdPollEvent(MdWindow &window)
 
 u32 mdGetTicks()
 {
-    return (clock() * 1000 / CLOCKS_PER_SEC);
+    return ((clock() - context.timestamp) * 1000 / CLOCKS_PER_SEC);
 }
