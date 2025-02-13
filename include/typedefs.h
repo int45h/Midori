@@ -16,6 +16,8 @@ typedef double f64;
 typedef size_t usize;
 typedef ssize_t ssize;
 
+#define MD_ARRAY_SIZE(arr, t) (sizeof(arr) / sizeof(t))
+
 #define LOG_ERROR(err, ...) fprintf(stderr, "error: " err "\n", ##__VA_ARGS__)
 #define MIN_VAL(a,b) (((a)<(b))?(a):(b))
 #define MAX_VAL(a,b) (((a)>(b))?(a):(b))

@@ -18,8 +18,8 @@ layout (set=0, binding=0) uniform UBO
 }
 ubo;
 
-layout (set=0, binding=1) uniform sampler2D tex;
-layout (set=0, binding=3) uniform sampler2D shadow_tex;
+layout (set=2, binding=0) uniform sampler2D tex;
+layout (set=2, binding=1) uniform sampler2D shadow_tex;
 
 float get_shadow()
 {

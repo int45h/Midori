@@ -156,6 +156,8 @@ VkResult mdAllocateCommandBuffers(MdRenderContext &context, u32 buffer_count, Vk
     alloc_info.commandPool =  encoder.pool;
     alloc_info.level = level;
     encoder.buffers.reserve(buffer_count);
+    for (u32 i=0; i<buffer_count; i++)
+        encoder.buffers.push_back(VK_NULL_HANDLE);
 
     VkResult result = vkAllocateCommandBuffers(context.device, &alloc_info, encoder.buffers.data());
     VK_CHECK(result, "failed to allocate command buffers");
@@ -496,7 +498,8 @@ VkResult mdBuildTexture2D(  MdRenderContext &context,
     texture.subresource = tex_builder.image_view_info.subresourceRange;
 
     VmaAllocationCreateInfo img_info = {};
-    img_info.usage = VMA_MEMORY_USAGE_AUTO;
+    img_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    img_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     img_info.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
 
     VkResult result = vmaCreateImage(
@@ -624,12 +627,12 @@ VkResult mdBuildTexture2D(  MdRenderContext &context,
 #define MAX_ATTACHMENT_WIDTH 8192
 #define MAX_ATTACHMENT_HEIGHT 8192
 
-VkResult mdBuildDepthAttachmentTexture2D( MdRenderContext &context, 
-                                MdGPUTextureBuilder &tex_builder,
-                                MdGPUAllocator &allocator,
-                                MdGPUTexture &texture, 
-                                MdCommandEncoder *p_command_encoder,
-                                u32 command_buffer_index)
+VkResult mdBuildDepthAttachmentTexture2D(   MdRenderContext &context, 
+                                            MdGPUTextureBuilder &tex_builder,
+                                            MdGPUAllocator &allocator,
+                                            MdGPUTexture &texture, 
+                                            MdCommandEncoder *p_command_encoder,
+                                            u32 command_buffer_index)
 {
     texture.channels = tex_builder.channels;
     texture.w = tex_builder.image_info.extent.width;
@@ -1103,6 +1106,22 @@ VkResult mdLoadShaderSPIRV( MdRenderContext &context,
     return result;
 }
 
+void mdShaderAddBinding(    MdShaderSource &source,
+                            u32 binding_index, 
+                            VkDescriptorType type, 
+                            u32 count, 
+                            VkShaderStageFlags stage_flags, 
+                            const VkSampler* p_immutable_samplers)
+{
+    source.bindings.push_back({
+        .binding = binding_index,
+        .descriptorType = type,
+        .descriptorCount = count,
+        .stageFlags = stage_flags,
+        .pImmutableSamplers = p_immutable_samplers
+    });
+}
+
 void mdDestroyShaderSource(MdRenderContext &context, MdShaderSource &source)
 {
     if (source.modules.size() > 0)
@@ -1364,6 +1383,16 @@ void mdBuildGeometryInputState(MdPipelineGeometryInputState &stage)
     stage.vertex_info.pVertexAttributeDescriptions = stage.attributes.data();
     stage.vertex_info.vertexBindingDescriptionCount = stage.bindings.size();
     stage.vertex_info.pVertexBindingDescriptions = stage.bindings.data();
+}
+
+void mdBuildDefaultGeometryInputState(MdPipelineGeometryInputState &stage)
+{
+    mdInitGeometryInputState(stage);
+    mdGeometryInputAddVertexBinding(stage, VK_VERTEX_INPUT_RATE_VERTEX, 8*sizeof(f32));
+    mdGeometryInputAddAttribute(stage, 0, 0, 3, MD_F32, 0);
+    mdGeometryInputAddAttribute(stage, 0, 1, 3, MD_F32, 3*sizeof(f32));
+    mdGeometryInputAddAttribute(stage, 0, 2, 2, MD_F32, 6*sizeof(f32));
+    mdBuildGeometryInputState(stage);
 }
 #pragma endregion
 

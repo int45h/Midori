@@ -4,7 +4,7 @@ project('Midori', 'cpp',
     meson_version: '>= 1.2.0',
     default_options: [
         'cpp_std=c++17',
-        'buildtype=debugoptimized',
+        'buildtype=debug',
         'debug=true'
     ]
 )
@@ -23,6 +23,7 @@ src = [
     'src/platform/shared_library/library_posix.cc',
     'src/vma/vma_usage.cc', 
     'src/renderer/renderer_vk/renderer_vk_helpers.cc', 
+    'src/renderer/renderer_vk/renderer_vk.cc', 
     'include/vk_bootstrap/VkBootstrap.cpp', 
     'src/stb_image/stb_image_usage.cc',
     'src/main.cc']

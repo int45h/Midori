@@ -1,3 +1,4 @@
+#pragma once
 #include <vulkan/vulkan_core.h>
 
 #include <VkBootstrap.h>
@@ -204,6 +205,7 @@ void mdDestroyRenderTarget(MdRenderContext &context, MdRenderTarget &target);
 struct MdShaderSource
 {
     std::vector<VkPipelineShaderStageCreateInfo> modules;
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
 };
 
 VkResult mdLoadShaderSPIRV( MdRenderContext &context, 
@@ -211,7 +213,13 @@ VkResult mdLoadShaderSPIRV( MdRenderContext &context,
                             const u32 *p_code, 
                             VkShaderStageFlagBits stage,
                             MdShaderSource &source);
-void mdDestroyShaderSource(MdRenderContext &context, MdShaderSource &source);
+void mdShaderAddBinding(    MdShaderSource &source,
+                            u32 binding_index, 
+                            VkDescriptorType type, 
+                            u32 count, 
+                            VkShaderStageFlags stage_flags, 
+                            const VkSampler* p_immutable_samplers = NULL);
+void mdDestroyShaderSource( MdRenderContext &context, MdShaderSource &source);
 
 struct MdDescriptorSetAllocator
 {
@@ -281,6 +289,7 @@ void MdGeometryInputStageSetTopology(   MdPipelineGeometryInputState &stage,
                                         VkPrimitiveTopology topology, 
                                         VkBool32 primitive_restart = VK_FALSE);
 void mdBuildGeometryInputState(MdPipelineGeometryInputState &stage);
+void mdBuildDefaultGeometryInputState(MdPipelineGeometryInputState &stage);
 #pragma endregion
 
 #pragma region [ Rasterization State ]
