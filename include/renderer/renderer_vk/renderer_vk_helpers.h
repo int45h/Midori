@@ -112,7 +112,16 @@ void mdTransitionImageLayout(   MdGPUTexture &texture,
                                 VkPipelineStageFlags src_stage,
                                 VkPipelineStageFlags dst_stage,
                                 VkCommandBuffer buffer);
-
+void mdTransitionImageLayoutWaitEvent(  MdGPUTexture &texture, 
+                                        VkImageLayout src_layout, 
+                                        VkImageLayout dst_layout, 
+                                        VkAccessFlags src_access, 
+                                        VkAccessFlags dst_access, 
+                                        VkPipelineStageFlags src_stage, 
+                                        VkPipelineStageFlags dst_stage, 
+                                        VkCommandBuffer buffer,
+                                        VkEvent *p_event);
+                                        
 struct MdGPUTextureBuilder
 {
     VkImageCreateInfo image_info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};

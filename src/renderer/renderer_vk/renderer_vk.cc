@@ -97,13 +97,15 @@ struct MdRenderPassEntry
 
     VkRenderPass pass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers;
-    std::vector<VkClearValue> clear_values;
 
     std::function<void(VkCommandBuffer, VkFramebuffer)> record = NULL;
 
     std::vector<std::string> input_attachments;
     std::vector<std::string> output_attachments;
     VkCommandBuffer buffer = VK_NULL_HANDLE;
+
+    VkPipelineStageFlags wait_stages = 0;
+    //VkEvent render_event = VK_NULL_HANDLE;
 };
 
 struct MdRenderGraphNode
@@ -628,10 +630,10 @@ VkResult mdRenderGraphBuildPass(u32 index)
     {
         attachments[0].flags = 0;
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         attachments[0].format = render_graph.p_context->swapchain.image_format;
         attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -660,12 +662,19 @@ VkResult mdRenderGraphBuildPass(u32 index)
         pass_info.pDependencies = deps;
         pass_info.flags = 0;
 
-        return vkCreateRenderPass(
+        VkResult result = vkCreateRenderPass(
             render_graph.device, 
             &pass_info, 
             NULL, 
             &render_graph.passes[index].pass
         );
+        if (result == VK_SUCCESS)
+            printf("built pass \"%s\" with %d attachments\n", 
+                render_graph.passes[index].id.c_str(),
+                pass_info.attachmentCount
+            );
+        
+        return result;
     }
 
     auto ptr = &render_graph.passes[index].output_attachments;
@@ -673,6 +682,8 @@ VkResult mdRenderGraphBuildPass(u32 index)
                 has_depth = false;
     VkFormat    color_format = VK_FORMAT_UNDEFINED, 
                 depth_format = VK_FORMAT_UNDEFINED;
+    u32         color_idx = -1,
+                depth_idx = -1;
 
     for (auto it=ptr->begin(); it!=ptr->end(); it++)
     {
@@ -683,67 +694,73 @@ VkResult mdRenderGraphBuildPass(u32 index)
         has_color |= (att_it->second.type == MD_ATTACHMENT_TYPE_COLOR);
         has_depth |= (att_it->second.type == MD_ATTACHMENT_TYPE_DEPTH);
 
-        if (has_color) color_format = att_it->second.builder.image_info.format;
-        if (has_depth) depth_format = att_it->second.builder.image_info.format;
+        if (has_color && color_idx == -1) 
+        {
+            color_format = att_it->second.builder.image_info.format;
+            color_idx = att_count;
+        }
+        if (has_depth && depth_idx == -1) 
+        {
+            depth_format = att_it->second.builder.image_info.format;
+            depth_idx = att_count;
+        }
+
+        att_count++;
     }
 
     // Setup color attachment descriptions, refs, and subpass dependencies
     if (has_color)
     {
-        attachments[att_count].flags = 0;
-        attachments[att_count].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[att_count].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        attachments[att_count].format = color_format;
-        attachments[att_count].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[att_count].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[att_count].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[att_count].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[att_count].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[color_idx].flags = 0;
+        attachments[color_idx].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[color_idx].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[color_idx].format = color_format;
+        attachments[color_idx].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[color_idx].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[color_idx].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[color_idx].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[color_idx].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
-        att_refs[att_count].attachment = att_count;
-        att_refs[att_count].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att_refs[color_idx].attachment = color_idx;
+        att_refs[color_idx].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-        deps[att_count].dependencyFlags = 0;
-        deps[att_count].srcSubpass = VK_SUBPASS_EXTERNAL;
-        deps[att_count].dstSubpass = 0;
-        deps[att_count].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[att_count].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        deps[att_count].srcAccessMask = 0;
-        deps[att_count].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[color_idx].dependencyFlags = 0;
+        deps[color_idx].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[color_idx].dstSubpass = 0;
+        deps[color_idx].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[color_idx].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[color_idx].srcAccessMask = 0;
+        deps[color_idx].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         
         desc.colorAttachmentCount = 1;
-        desc.pColorAttachments = &att_refs[att_count];
-        
-        att_count++;
+        desc.pColorAttachments = &att_refs[color_idx];
     }
     
     // Setup depth attachment descriptions, refs, and subpass dependencies
     if (has_depth)
     {
-        attachments[att_count].flags = 0;
-        attachments[att_count].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[att_count].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        attachments[att_count].format = depth_format;
-        attachments[att_count].samples = VK_SAMPLE_COUNT_1_BIT;
-        attachments[att_count].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[att_count].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attachments[att_count].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attachments[att_count].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[depth_idx].flags = 0;
+        attachments[depth_idx].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[depth_idx].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        attachments[depth_idx].format = depth_format;
+        attachments[depth_idx].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[depth_idx].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[depth_idx].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[depth_idx].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[depth_idx].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
-        att_refs[att_count].attachment = att_count;
-        att_refs[att_count].layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        att_refs[depth_idx].attachment = depth_idx;
+        att_refs[depth_idx].layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-        deps[att_count].dependencyFlags = 0;
-        deps[att_count].srcSubpass = VK_SUBPASS_EXTERNAL;
-        deps[att_count].dstSubpass = 0;
-        deps[att_count].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[att_count].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        deps[att_count].srcAccessMask = 0;
-        deps[att_count].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[depth_idx].dependencyFlags = 0;
+        deps[depth_idx].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[depth_idx].dstSubpass = 0;
+        deps[depth_idx].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[depth_idx].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[depth_idx].srcAccessMask = 0;
+        deps[depth_idx].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         
-        desc.pDepthStencilAttachment = &att_refs[att_count];
-
-        att_count++;
+        desc.pDepthStencilAttachment = &att_refs[depth_idx];
     }
 
     desc.preserveAttachmentCount = 0;
@@ -770,7 +787,12 @@ VkResult mdRenderGraphBuildPass(u32 index)
         NULL, 
         &render_graph.passes[index].pass
     );
-    printf("built pass \"%s\"\n", render_graph.passes[index].id.c_str());
+    VK_CHECK(result, "failed to make pass \"%s\"", render_graph.passes[index].id.c_str());
+    
+    printf("built pass \"%s\" with %ld attachments\n", 
+        render_graph.passes[index].id.c_str(),
+        att_count
+    );
     return result;
 }
 
@@ -913,7 +935,10 @@ VkResult mdRenderGraphGenerateFramebuffers(const std::vector<VkImageView> &swapc
                 pass_ptr->framebuffers.push_back(handle);
             }
         }
+
+        printf("Generated %ld framebuffers for pass \"%s\"\n", pass_ptr->framebuffers.size(), render_graph.passes[p].id.c_str());
     }
+
 
     return result;
 }
@@ -1110,19 +1135,19 @@ void mdExecuteRenderPass(const std::vector<VkClearValue> &values, const std::str
     mdExecuteRenderPass(values, pass_index, fb_index);
 }
 
-void mdExecuteRenderPass(const std::vector<VkClearValue> &values, u32 pass_index, u32 fb_index)
+void mdExecuteRenderPass(const std::vector<VkClearValue> &values, u32 index, u32 fb_index)
 {
-    if (pass_index >= render_graph.compiled_count)
+    if (index >= render_graph.compiled_count)
     {
         LOG_ERROR("index cannot be greater than or equal to the number of passes in the graph");
         return;
     }
 
-    printf("Beginning pass \"%s\"\n", render_graph.passes[pass_index].id.c_str());
-
-    // Set clear values if need be
-    if (render_graph.passes[pass_index].clear_values.empty())
-        render_graph.passes[pass_index].clear_values = values;
+    // Get the index of the current and previous pass
+    u32 pass_index_1 = (((i32)index-1) >= 0) 
+        ? render_graph.compiled_nodes[index-1].index
+        : 0;
+    u32 pass_index = render_graph.compiled_nodes[index].index;
 
     // Get the command buffer
     VkCommandBuffer buffer = render_graph.passes[pass_index].buffer;
@@ -1183,16 +1208,16 @@ void mdExecuteRenderPass(const std::vector<VkClearValue> &values, u32 pass_index
     begin_info.renderPass = render_graph.passes[pass_index].pass;
     begin_info.renderArea.offset = {0,0};
     begin_info.renderArea.extent = render_graph.p_context->swapchain.extent;
-    begin_info.clearValueCount = render_graph.passes[pass_index].clear_values.size();
-    begin_info.pClearValues = render_graph.passes[pass_index].clear_values.data();
+    begin_info.clearValueCount = values.size();
+    begin_info.pClearValues = values.data();
+    
     begin_info.framebuffer = fb;
 
     vkCmdBeginRenderPass(buffer, &begin_info, VK_SUBPASS_CONTENTS_INLINE);
-    printf("buffer: %016X\n", buffer);
 
     if (render_graph.passes[pass_index].record != NULL)
         render_graph.passes[pass_index].record(buffer, fb);
-    
+
     vkCmdEndRenderPass(buffer);
     vkEndCommandBuffer(buffer);
 }
@@ -1208,7 +1233,7 @@ void mdRenderGraphSubmit(std::vector<VkCommandBuffer> &buffers, bool refill)
         if (buffers.capacity() < render_graph.compiled_count)
             buffers.reserve(render_graph.compiled_count);
 
-        for (u32 i=0; i<render_graph.compiled_count; i++)
+        for (i32 i=render_graph.compiled_count-1; i>=0; i--)
         {
             u32 pass_index = render_graph.compiled_nodes[i].index;
             buffers.push_back(render_graph.passes[pass_index].buffer);
@@ -1251,7 +1276,8 @@ struct MdDescriptorAllocator
     bool ResetPools(u32 index);
     
     VkResult AllocateSets(VkDescriptorSetLayout layout, u32 set_index, u32 size, VkDescriptorSet *p_sets);
-    ~MdDescriptorAllocator();
+    void Destroy();
+    ~MdDescriptorAllocator(){};
 };
 
 VkResult MdDescriptorAllocator::Init(VkDevice device)
@@ -1388,7 +1414,7 @@ VkResult MdDescriptorAllocator::AllocateSets(VkDescriptorSetLayout layout, u32 s
     return result;
 }
 
-MdDescriptorAllocator::~MdDescriptorAllocator()
+void MdDescriptorAllocator::Destroy()
 {
     for (u32 i=0; i<pools.size(); i++)
     {
@@ -1401,6 +1427,11 @@ MdDescriptorAllocator uniform_allocator;
 VkResult mdCreateDescriptorAllocator(MdRenderer &renderer)
 {
     return uniform_allocator.Init(renderer.context->device);
+}
+
+void mdDestroyDescriptorAllocator()
+{
+    uniform_allocator.Destroy();
 }
 
 void mdDescriptorSetWriteImage( MdRenderer &renderer, 

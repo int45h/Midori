@@ -40,8 +40,8 @@ struct MdCamera
 };
 
 #define MD_NULL_HANDLE 0xFFFFFFFF
-typedef u32 MdPipelineHandle;
-typedef u32 MdMaterialHandle;
+//typedef u32 MdPipelineHandle;
+//typedef u32 MdMaterialHandle;
 
 VkExtent2D shadow_extent = {8192, 8192};
 MdRenderState *p_renderer_state;
@@ -105,9 +105,22 @@ VkResult mdCreateGeometryPass(MdRenderer &renderer)
     geometry_info.address[1] = 
     geometry_info.address[2] = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     
+    // depth buffer
+    MdRenderPassAttachmentInfo depth_info = {};
+    depth_info.is_swapchain = false;
+    depth_info.type = MD_ATTACHMENT_TYPE_DEPTH;
+    depth_info.format = VK_FORMAT_D32_SFLOAT;
+    depth_info.border_color = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    depth_info.address[0] = 
+    depth_info.address[1] = 
+    depth_info.address[2] = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    
     mdAddRenderPass("geometry");
     result = mdAddRenderPassOutput("geometry", "color_tex1", geometry_info);
-    VK_CHECK(result, "failed to create shadow pass");
+    VK_CHECK(result, "failed to create geometry pass");
+    result = mdAddRenderPassOutput("geometry", "depth_tex1", depth_info);
+    VK_CHECK(result, "failed to create geometry pass");
+    
     mdAddRenderPassInput("geometry", "shadow_map");
     
     MdGPUTexture *color_texture;
@@ -628,9 +641,6 @@ int main()
 
     // Set render functions
     mdAddRenderPassFunction("shadow", [=](VkCommandBuffer cmd, VkFramebuffer fb){
-        printf("Beginning shadow pass\n");
-        printf("[INSIDE PASS] buffer: %016X\n", cmd);
-        
         vkCmdSetViewport(cmd, 0, 1, &shadow_viewport);
         vkCmdSetScissor(cmd, 0, 1, &shadow_scissor);
         VkDescriptorSet sets[] = {
@@ -665,7 +675,6 @@ int main()
     });
 
     mdAddRenderPassFunction("geometry", [=](VkCommandBuffer cmd, VkFramebuffer fb){
-        printf("Beginning geometry pass\n");
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         VkDescriptorSet sets[] = {
@@ -700,7 +709,6 @@ int main()
     });
 
     mdAddRenderPassFunction("final", [=](VkCommandBuffer cmd, VkFramebuffer fb){
-        printf("Beginning final pass\n");
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         VkDescriptorSet sets[] = {
@@ -735,9 +743,12 @@ int main()
         window_event.nw = w;
         window_event.nh = h;
     });
-    std::vector<VkClearValue> values(2);
+    std::vector<VkClearValue> depth_values;
+    depth_values.push_back({.8, .8, .8, 1.});
+    depth_values.push_back({.depthStencil = {1.0f, 0}});
+
+    std::vector<VkClearValue> values(1);
     values.push_back({.8, .8, .8, 1.});
-    values.push_back({.depthStencil = {1.0f, 0}});
 
     std::vector<VkCommandBuffer> pass_buffers;
 
@@ -791,20 +802,10 @@ int main()
         }
 
         // Command recording
-        {
-            VkCommandBufferBeginInfo begin_info = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-            begin_info.pInheritanceInfo = NULL;
-            begin_info.flags = 0;
-            //vkResetCommandBuffer(cmd_encoder.buffers[0], 0);
-            //vkBeginCommandBuffer(cmd_encoder.buffers[0], &begin_info);
-
-            mdExecuteRenderPass(values, 0);
-            mdExecuteRenderPass(values, 1);
-            mdExecuteRenderPass(values, 2, image_index);
-            mdRenderGraphSubmit(pass_buffers, image_index);
-
-            //vkEndCommandBuffer(cmd_encoder.buffers[0]);
-        }
+        mdExecuteRenderPass(depth_values, 0, image_index);
+        mdExecuteRenderPass(depth_values, 1);
+        mdExecuteRenderPass(depth_values, 2);
+        mdRenderGraphSubmit(pass_buffers, image_index);
 
         // Submit to queue and present image
         {
@@ -841,6 +842,15 @@ int main()
 
     vkQueueWaitIdle(p_renderer_state->graphics_queue.queue_handle);
 
+    // Destroy materials and pipelines
+    mdDestroyPipeline(renderer, geometry_pipeline);
+    mdDestroyPipeline(renderer, p_renderer_state->final_pipeline);
+    mdDestroyPipeline(renderer, p_renderer_state->shadow_pipeline);
+    mdDestroyDescriptorAllocator();
+
+    // Destroy render graph
+    mdRenderGraphDestroy();
+
     // Destroy fences and semaphores
     vkDestroySemaphore(renderer.context->device, image_available, NULL);
     vkDestroySemaphore(renderer.context->device, render_finished, NULL);
@@ -853,7 +863,6 @@ int main()
     mdFreeGPUBuffer(p_renderer_state->allocator, uniform_buffer);
     mdFreeGPUBuffer(p_renderer_state->allocator, vertex_buffer);
     
-    mdDestroyPipeline(renderer, geometry_pipeline);
     mdDestroyCommandEncoder(*renderer.context, cmd_encoder);
     mdDestroyRenderer(renderer);
     return 0;

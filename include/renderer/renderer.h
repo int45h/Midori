@@ -106,6 +106,8 @@ struct MdMaterial
 };
 
 VkResult mdCreateDescriptorAllocator(MdRenderer &renderer);
+void mdDestroyDescriptorAllocator();
+
 void mdDescriptorSetWriteImage(     MdRenderer &renderer, 
                                     VkDescriptorSet dst, 
                                     u32 binding_index, 

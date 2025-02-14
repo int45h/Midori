@@ -434,6 +434,43 @@ void mdTransitionImageLayout(   MdGPUTexture &texture,
     );
 }
 
+void mdTransitionImageLayoutWaitEvent(  MdGPUTexture &texture, 
+                                        VkImageLayout src_layout, 
+                                        VkImageLayout dst_layout, 
+                                        VkAccessFlags src_access, 
+                                        VkAccessFlags dst_access, 
+                                        VkPipelineStageFlags src_stage, 
+                                        VkPipelineStageFlags dst_stage, 
+                                        VkCommandBuffer buffer,
+                                        VkEvent *p_event)
+{
+    VkImageMemoryBarrier image_barrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    image_barrier.image = texture.image;
+    image_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    image_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    
+    image_barrier.oldLayout = src_layout;
+    image_barrier.newLayout = dst_layout;
+    image_barrier.srcAccessMask = src_access;
+    image_barrier.dstAccessMask = dst_access;
+
+    image_barrier.subresourceRange = texture.subresource;
+
+    vkCmdWaitEvents(
+        buffer, 
+        1, 
+        p_event, 
+        src_stage, 
+        dst_stage, 
+        0, 
+        NULL, 
+        0, 
+        NULL, 
+        1, 
+        &image_barrier
+    );
+}
+
 void mdCreateTextureBuilder2D(MdGPUTextureBuilder &builder, u16 w, u16 h, VkFormat format, VkImageAspectFlags aspect, u16 channels)
 {
     builder.image_info.flags = 0;
