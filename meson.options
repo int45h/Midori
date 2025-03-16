@@ -1,1 +1,1 @@
-option('use_sdl', type: 'boolean', value: false)
+option('use_sdl', type: 'boolean', value: true)

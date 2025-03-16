@@ -46,6 +46,37 @@ MdRenderState renderer_state;
 
 void mdGetRenderState(MdRenderState **pp_state) { *pp_state = &renderer_state; }
 
+#pragma region [ Deletion Queue ]
+
+// TO-DO: Make this lock free somehow
+struct MdDeletionQueue
+{
+    std::vector<std::function<void()>> delete_items;
+};
+MdDeletionQueue main_deletion_queue;
+
+void mdInitDeletionQueue()
+{
+    main_deletion_queue.delete_items.reserve(128);
+}
+
+void mdAddToDeletionQueue(std::function<void()> func)
+{
+    main_deletion_queue.delete_items.push_back(func);
+}
+
+void mdRunDeletionQueue()
+{
+    while (main_deletion_queue.delete_items.size() > 0)
+    {
+        u32 idx = main_deletion_queue.delete_items.size()-1;
+        main_deletion_queue.delete_items[idx]();
+        main_deletion_queue.delete_items.pop_back();
+    }
+}
+
+#pragma endregion
+
 #pragma region [ Render Graph ]
 
 u32 get_bit_count_8(u8 b)
@@ -1240,7 +1271,6 @@ void mdRenderGraphSubmit(std::vector<VkCommandBuffer> &buffers, bool refill)
         }
     }
 }
-
 #pragma endregion
 
 #pragma region [ Material System ]
@@ -1649,93 +1679,6 @@ void mdMaterialSetUBO(MdRenderer &renderer, MdMaterial& material, u32 binding_in
 }
 #pragma endregion
 
-/*
-#pragma region [ Mesh List ]
-struct MdMeshList
-{
-    std::map<u32, std::vector<VkBuffer>> meshes;
-    std::map<u32, std::vector<VkDeviceSize>> offsets;
-
-    MdMeshList(){}
-
-    void AddMesh(VkBuffer mesh, VkDeviceSize size, u32 material_index = UINT32_MAX);
-    void RemoveMesh(VkBuffer mesh);
-    bool UpdateMesh(VkBuffer mesh, u32 material_index);
-};
-
-void MdMeshList::AddMesh(VkBuffer mesh, VkDeviceSize size, u32 material_index)
-{
-    auto res = meshes.find(material_index);
-    if (res == meshes.end())
-    {
-        meshes.emplace(std::pair<u32, VkBuffer>(material_index, mesh));
-        offsets.emplace(std::pair<u32, VkDeviceSize>(material_index, size));
-    }
-    else
-    {
-        meshes[material_index].push_back(mesh);
-        offsets[material_index].push_back(size);
-    }
-}
-
-void MdMeshList::RemoveMesh(VkBuffer mesh)
-{
-    u32 idx = UINT32_MAX;
-    u32 material_idx = UINT32_MAX;
-
-    for (auto m_it = meshes.begin(); m_it != meshes.end(); m_it++)
-    {
-        auto mesh_list = &meshes.at(m_it->first);
-        for (auto it = mesh_list->begin(); it != mesh_list->end(); it++)
-        {
-            if (*it != mesh)
-                continue;
-            
-            idx = std::distance(mesh_list->begin(), it);
-            material_idx = m_it->first;
-
-            mesh_list->erase(it);
-        }
-    }
-    
-    if (idx == UINT32_MAX) return;
-    offsets[material_idx].erase(offsets[material_idx].begin() + idx);
-}
-
-bool MdMeshList::UpdateMesh(VkBuffer mesh, u32 material_index)
-{
-    u32 idx = UINT32_MAX;
-    u32 material_idx = UINT32_MAX;
-    
-    VkDeviceSize size = 0;
-
-    // Remove the mesh from the list if it doesn't exist already
-    for (auto m_it = meshes.begin(); m_it != meshes.end(); m_it++)
-    {
-        auto mesh_list = &meshes.at(m_it->first);
-        for (auto it = mesh_list->begin(); it != mesh_list->end(); it++)
-        {
-            if (*it != mesh)
-                continue;
-            
-            idx = std::distance(mesh_list->begin(), it);
-            material_idx = m_it->first;
-
-            size = offsets[material_idx][idx];
-            mesh_list->erase(it);
-        }
-    }
-    
-    // If the mesh hasn't been found already, break early
-    if (idx == UINT32_MAX) return false;
-    offsets[material_idx].erase(offsets[material_idx].begin() + idx);
-    
-    AddMesh(mesh, size, material_index);
-    return true;
-}
-#pragma endregion
-*/
-
 MdRenderContext renderer_context;
 VkExtent2D shadow_map_extent = {8192, 8192};
 
@@ -1867,7 +1810,7 @@ MdResult mdCreateRendererState(MdRenderer &renderer)
         renderer_state.graphics_queue
     );
     if (vk_result != VK_SUCCESS) { result = MD_ERROR_UNKNOWN; goto fail; }
-
+    
     // Create uniform allocator
     vk_result = mdCreateDescriptorAllocator(renderer);
     if (vk_result != VK_SUCCESS) { result = MD_ERROR_UNKNOWN; goto fail; }
@@ -1894,11 +1837,17 @@ MdResult mdCreateRenderer(u16 w, u16 h, const char *p_name, MdRenderer &renderer
     std::vector<const char*> instance_extensions;
     u16 count = 0;
     
+    // Init the deletion queue
+    mdInitDeletionQueue();
+
     VkResult vk_result = VK_ERROR_UNKNOWN;
     MdResult result = mdInitWindowSubsystem();
+    mdAddToDeletionQueue([&](){ mdDestroyWindowSubsystem(); });
+
     if (result != MD_SUCCESS) goto fail;
 
     result = mdCreateWindow(w, h, p_name, renderer.window);
+    mdAddToDeletionQueue([&](){ mdDestroyWindow(renderer.window); });
     if (result != MD_SUCCESS) goto fail;
 
     // Init render context
@@ -1908,6 +1857,7 @@ MdResult mdCreateRenderer(u16 w, u16 h, const char *p_name, MdRenderer &renderer
     
     renderer.context = &renderer_context;
     result = mdInitContext(*renderer.context, instance_extensions);
+    mdAddToDeletionQueue([&](){ mdDestroyContext(*renderer.context); });
     if (result != MD_SUCCESS) goto fail;
     
     mdWindowGetSurfaceKHR(renderer.window, renderer.context->instance, &renderer.context->surface);
@@ -1921,6 +1871,7 @@ MdResult mdCreateRenderer(u16 w, u16 h, const char *p_name, MdRenderer &renderer
 
     // Renderer state initialization
     result = mdCreateRendererState(renderer);
+    mdAddToDeletionQueue([&](){ mdDestroyRendererState(renderer); });
     if (result != MD_SUCCESS) goto fail;
 
     return MD_SUCCESS;
@@ -1932,11 +1883,7 @@ MdResult mdCreateRenderer(u16 w, u16 h, const char *p_name, MdRenderer &renderer
 
 void mdDestroyRenderer(MdRenderer &renderer)
 {
-    mdDestroyRendererState(renderer);
-
-    mdDestroyContext(*renderer.context);
-    mdDestroyWindow(renderer.window);
-    mdDestroyWindowSubsystem();
+    mdRunDeletionQueue();
 }
 
 VkResult buildDefualtShaders(   MdRenderer &renderer, 
@@ -1970,7 +1917,7 @@ void test()
     mdCreateRenderer(1920, 1080, "Midori Engine", renderer);
  
     MdScene scene;
-    //mdCreateScene(scene);
+    //mdCreateScene(scene);   
 
     MdCamera camera;
     //mdAddCamera();

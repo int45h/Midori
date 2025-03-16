@@ -39,7 +39,7 @@ void main()
 {
     float t = ubo.u_time;
     vec3 lp = (ubo.u_model*vec4(5.*cos(t), 3., 5.*sin(t), 1.)).xyz;
-    float li = 1000.;
+    float li = 10.;
 
     vec3 L = frag_pos.xyz - lp;
     float a = length(L);
@@ -48,7 +48,7 @@ void main()
 
     vec3 V = normalize(vec3(0,0,0) - frag_pos.xyz);
     vec3 H = normalize(L+V);
-    float kS = pow(max(dot(vnorm,H),0.),256.);
+    float kS = 0.;//pow(max(dot(vnorm,H),0.),1.);
     float kD = max(dot(L, vnorm), 0.)*a;
     float kA = .1;
     vec3 lit = vec3(kA+kD+kS);

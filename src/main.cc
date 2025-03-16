@@ -39,10 +39,7 @@ struct MdCamera
     Matrix4x4 view_projection;
 };
 
-#define MD_NULL_HANDLE 0xFFFFFFFF
-//typedef u32 MdPipelineHandle;
-//typedef u32 MdMaterialHandle;
-
+#define MD_NULL_HANDLE 0xFFFFFFFF 
 VkExtent2D shadow_extent = {8192, 8192};
 MdRenderState *p_renderer_state;
 
@@ -400,6 +397,11 @@ struct MdWindowEvent
     u16 nw, nh;
 };
 
+struct MdMeshBuffers
+{
+    std::vector<VkDeviceMemory> mesh_memory;
+};
+
 MdWindowEvent window_event = {};
 int main()
 {
@@ -424,22 +426,6 @@ int main()
         EXIT(renderer);
     }
 
-    // Create command pool and buffer
-    MdCommandEncoder cmd_encoder = {};
-    vk_result = mdCreateCommandEncoder(*renderer.context, p_renderer_state->graphics_queue.queue_index, cmd_encoder, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-    if (vk_result != VK_SUCCESS)
-    {
-        LOG_ERROR("failed to create command pool");
-        EXIT(renderer);
-    }
-
-    vk_result = mdAllocateCommandBuffers(*renderer.context, 1, VK_COMMAND_BUFFER_LEVEL_PRIMARY, cmd_encoder);
-    if (vk_result != VK_SUCCESS)
-    {
-        LOG_ERROR("failed to allocate command buffers");
-        EXIT(renderer);
-    }
-
     u64 size = w*h*bpp;
     printf("image_size: %zu\n", size);
 
@@ -459,10 +445,22 @@ int main()
     MdGPUBuffer index_buffer = {};
     float *geometry;
     usize geometry_size;
-    mdLoadOBJ("../models/teapot/teapot.obj", &geometry, &geometry_size);
+    mdLoadOBJ("../models/teapot/teapot_smooth.obj", &geometry, &geometry_size);
 
-    mdAllocateGPUBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, geometry_size*VERTEX_SIZE*sizeof(f32), p_renderer_state->allocator, vertex_buffer);
-    mdUploadToGPUBuffer(*renderer.context, p_renderer_state->allocator, 0, geometry_size*VERTEX_SIZE*sizeof(f32), geometry, vertex_buffer);
+    mdAllocateGPUBuffer(
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+        geometry_size*VERTEX_SIZE*sizeof(f32), 
+        p_renderer_state->allocator, 
+        vertex_buffer
+    );
+    mdUploadToGPUBuffer(
+        *renderer.context, 
+        p_renderer_state->allocator, 
+        0, 
+        geometry_size*VERTEX_SIZE*sizeof(f32),
+        geometry, 
+        vertex_buffer
+    );
     free(geometry);
 
     MdPipeline geometry_pipeline;
@@ -863,7 +861,6 @@ int main()
     mdFreeGPUBuffer(p_renderer_state->allocator, uniform_buffer);
     mdFreeGPUBuffer(p_renderer_state->allocator, vertex_buffer);
     
-    mdDestroyCommandEncoder(*renderer.context, cmd_encoder);
     mdDestroyRenderer(renderer);
     return 0;
 }

@@ -2,7 +2,6 @@
 
 #include "renderer_vk/renderer_vk_helpers.h"
 #include <vulkan/vulkan_core.h>
-#define MD_USE_VULKAN
 #include <renderer_api.h>
 #include <platform/window/window.h>
 #include <simd_math.h>
