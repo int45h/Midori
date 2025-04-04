@@ -235,6 +235,7 @@ VkResult mdAllocateGPUBuffer(VkBufferUsageFlags usage, u32 size, MdGPUAllocator 
     VK_CHECK(result, "failed to allocate buffer");
 
     buffer.size = size;
+    buffer.free = false;
     return result;
 }
 
@@ -260,18 +261,27 @@ VkResult mdAllocateGPUUniformBuffer(u32 size, MdGPUAllocator &allocator, MdGPUBu
     VK_CHECK(result, "failed to allocate buffer");
 
     buffer.size = size;
+    buffer.free = false;
     return result;
 }
 
 void mdFreeGPUBuffer(MdGPUAllocator &allocator, MdGPUBuffer &buffer)
 {
+    if (buffer.free == true)
+        return;
+    
     vmaDestroyBuffer(allocator.allocator, buffer.buffer, buffer.allocation);
+    buffer.free = false;
 }
 
 void mdFreeUniformBuffer(MdGPUAllocator &allocator, MdGPUBuffer &buffer)
 {
+    if (buffer.free == true)
+        return;
+    
     vmaUnmapMemory(allocator.allocator, buffer.allocation);
     vmaDestroyBuffer(allocator.allocator, buffer.buffer, buffer.allocation);
+    buffer.free = false;
 }
 
 VkResult mdUploadToGPUBuffer(   MdRenderContext &context, 
@@ -949,9 +959,17 @@ void mdSetMagFilters(MdGPUTextureBuilder &builder, VkFilter mag_filter, VkFilter
 void mdDestroyTexture(MdGPUAllocator &allocator, MdGPUTexture &texture)
 {
     if (texture.sampler != VK_NULL_HANDLE)
+    {
         vkDestroySampler(allocator.device, texture.sampler, NULL);
+        texture.sampler = VK_NULL_HANDLE;
+    }
+
     if (texture.image_view != VK_NULL_HANDLE)
+    {
         vkDestroyImageView(allocator.device, texture.image_view, NULL);
+        texture.image_view = VK_NULL_HANDLE;
+    }
+    
     vmaDestroyImage(allocator.allocator, texture.image, texture.allocation);
 }
 

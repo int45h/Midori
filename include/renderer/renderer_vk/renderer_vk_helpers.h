@@ -70,6 +70,7 @@ struct MdGPUBuffer
     VmaAllocationInfo allocation_info;
     VkBuffer buffer;
     u32 size;
+    bool free = true;
 };
 
 struct MdGPUAllocator

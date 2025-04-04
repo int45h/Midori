@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdlib>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -397,10 +398,118 @@ struct MdWindowEvent
     u16 nw, nh;
 };
 
-struct MdMeshBuffers
+struct MdModel
 {
-    std::vector<VkDeviceMemory> mesh_memory;
+    MdGPUBuffer         vertex_buffer, 
+                        index_buffer;
+    MdGPUTexture        texture;
+    MdGPUTextureBuilder texture_builder;
+    usize               geometry_size;
 };
+
+MdResult mdLoadTextureFromPath(MdRenderer &renderer, const std::string& path, MdGPUTexture &texture, MdGPUTextureBuilder &tex_builder)
+{
+    int w = 0, h = 0, bpp = 0;
+    stbi_uc *img = stbi_load(path.c_str(), &w, &h, &bpp, 4);
+    if (img == NULL)
+    {
+        LOG_ERROR("failed to load image");
+        return MD_ERROR_UNKNOWN;
+    }
+    
+    u64 size = w*h*bpp;
+    printf("image_size: %zu\n", size);
+    
+    mdCreateTextureBuilder2D(tex_builder, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, bpp);
+    mdSetTextureUsage(tex_builder, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    mdSetFilterWrap(tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+    mdSetMipmapOptions(tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
+    mdSetMagFilters(tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
+    VkResult result = mdBuildTexture2D(*renderer.context, tex_builder, p_renderer_state->allocator, texture, img);
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR("failed to build texture");
+        free(img);
+        return MD_ERROR_UNKNOWN;
+    }
+
+    free(img);
+    return MD_SUCCESS;
+}
+
+MdResult mdLoadOBJFromPath(MdRenderer &renderer, const std::string& path, MdGPUBuffer &vertex_buffer, MdGPUBuffer &index_buffer, usize *geometry_size)
+{
+    float *geometry;
+    mdLoadOBJ(path.c_str(), &geometry, geometry_size);
+
+    VkResult result = mdAllocateGPUBuffer(
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+        *geometry_size*VERTEX_SIZE*sizeof(f32), 
+        p_renderer_state->allocator, 
+        vertex_buffer
+    );
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR("failed to allocate GPU memory for geometry");
+        free(geometry);
+        return MD_SUCCESS;
+    }
+
+    result = mdUploadToGPUBuffer(
+        *renderer.context, 
+        p_renderer_state->allocator, 
+        0, 
+        *geometry_size*VERTEX_SIZE*sizeof(f32),
+        geometry, 
+        vertex_buffer
+    );
+    if (result != VK_SUCCESS)
+    {
+        LOG_ERROR("failed to allocate GPU memory for geometry");
+        free(geometry);
+        return MD_SUCCESS;
+    }
+    
+    free(geometry);
+    return MD_SUCCESS;
+}
+
+void mdDestroyModel(MdRenderer &renderer, MdModel &model);
+MdResult mdLoadOBJModelFromPath(MdRenderer &renderer, const std::string& obj_path, MdModel &model, const std::string& tex_path = "")
+{
+    MdResult result = mdLoadOBJFromPath(
+        renderer, 
+        obj_path.c_str(), 
+        model.vertex_buffer, 
+        model.index_buffer, 
+        &model.geometry_size
+    );
+    if (result != MD_SUCCESS)
+    {
+        LOG_ERROR("failed to load model from path \"%s\"", obj_path.c_str());
+        return result;
+    }
+
+    if (tex_path == "")
+        return result;
+
+    result =  mdLoadTextureFromPath(renderer, tex_path, model.texture, model.texture_builder);
+    if (result != MD_SUCCESS)
+    {
+        LOG_ERROR("failed to load texture from path \"%s\"", tex_path.c_str());
+        mdDestroyModel(renderer, model);
+        return result;
+    }
+
+    return result;
+}
+
+void mdDestroyModel(MdRenderer &renderer, MdModel &model)
+{
+    mdDestroyTexture(p_renderer_state->allocator, model.texture);
+    mdFreeGPUBuffer(p_renderer_state->allocator, model.vertex_buffer);
+    mdFreeGPUBuffer(p_renderer_state->allocator, model.index_buffer);
+}
 
 MdWindowEvent window_event = {};
 int main()
@@ -416,89 +525,6 @@ int main()
     VkResult vk_result;
     
     mdGetRenderState(&p_renderer_state);
-
-    // Image texture
-    int w = 0, h = 0, bpp = 0;
-    stbi_uc *img = stbi_load("../images/test.png", &w, &h, &bpp, 4);
-    if (img == NULL)
-    {
-        LOG_ERROR("failed to load image");
-        EXIT(renderer);
-    }
-
-    u64 size = w*h*bpp;
-    printf("image_size: %zu\n", size);
-
-    MdGPUTexture texture = {};
-    MdGPUTextureBuilder tex_builder = {};
-    {    
-        mdCreateTextureBuilder2D(tex_builder, w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, bpp);
-        mdSetTextureUsage(tex_builder, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-        mdSetFilterWrap(tex_builder, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-        mdSetMipmapOptions(tex_builder, VK_SAMPLER_MIPMAP_MODE_LINEAR);
-        mdSetMagFilters(tex_builder, VK_FILTER_LINEAR, VK_FILTER_LINEAR);
-        mdBuildTexture2D(*renderer.context, tex_builder, p_renderer_state->allocator, texture, img);
-    }
-
-    // Vertex buffer
-    MdGPUBuffer vertex_buffer = {};
-    MdGPUBuffer index_buffer = {};
-    float *geometry;
-    usize geometry_size;
-    mdLoadOBJ("../models/teapot/teapot_smooth.obj", &geometry, &geometry_size);
-
-    mdAllocateGPUBuffer(
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
-        geometry_size*VERTEX_SIZE*sizeof(f32), 
-        p_renderer_state->allocator, 
-        vertex_buffer
-    );
-    mdUploadToGPUBuffer(
-        *renderer.context, 
-        p_renderer_state->allocator, 
-        0, 
-        geometry_size*VERTEX_SIZE*sizeof(f32),
-        geometry, 
-        vertex_buffer
-    );
-    free(geometry);
-
-    MdPipeline geometry_pipeline;
-
-    Matrix4x4 model;
-    Matrix4x4 view;
-    Matrix4x4 view_ls;
-    // UBO
-    MdGPUBuffer uniform_buffer = {};
-    UBO ubo = {};
-    {
-        model = Matrix4x4(
-            1, 0, 0, 0,
-            0, 1, 0, -2,
-            0, 0, 1, -15,
-            0, 0, 0, 1
-        );
-        view = Matrix4x4::LookAt(
-            Vector4(0,0,-1,0), 
-            Vector4(0,0,1,0), 
-            Vector4(0,1,0,0)
-        );
-        view_ls = Matrix4x4::LookAt(
-            Vector4(3,0,-1,0), 
-            Vector4(0,0,1,0), 
-            Vector4(0,1,0,0)
-        );
-
-        ubo.u_resolution[0] = renderer.window.w;
-        ubo.u_resolution[1] = renderer.window.h;
-        ubo.u_time = 0.0f;
-        ubo.u_view_projection = Matrix4x4::Perspective(45., (float)renderer.window.w/(float)renderer.window.h, 0.1f, 1000.0f) * view;
-        ubo.u_light_view_projection = Matrix4x4::Orthographic(-10, 10, -10, 10, 0.1, 1000) * view_ls;
-        ubo.u_model = model;
-
-        mdAllocateGPUUniformBuffer(sizeof(ubo), p_renderer_state->allocator, uniform_buffer);
-        mdUploadToUniformBuffer(*renderer.context, p_renderer_state->allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
-    }
 
     // Fences
     VkSemaphore image_available, render_finished;
@@ -564,9 +590,55 @@ int main()
     mdGetAttachmentTexture("color_tex1", &color_attachment);
     mdGetAttachmentTexture("shadow_map", &shadow_texture);
     
-    MdMaterial geometry_mat = {}, final_mat = {};
+    // Load texture
+    MdModel teapot = {};
+    result = mdLoadOBJModelFromPath(
+        renderer, 
+        "../models/teapot/teapot_smooth.obj", 
+        teapot, 
+        "../images/test.png"
+    );
+    if (result != MD_SUCCESS)
+        EXIT(renderer);
+    
+    Matrix4x4 model;
+    Matrix4x4 view;
+    Matrix4x4 view_ls;
+    // UBO
+    MdGPUBuffer uniform_buffer = {};
+    UBO ubo = {};
+    {
+        model = Matrix4x4(
+            1, 0, 0, 0,
+            0, 1, 0, -2,
+            0, 0, 1, -15,
+            0, 0, 0, 1
+        );
+        view = Matrix4x4::LookAt(
+            Vector4(0,0,-1,0), 
+            Vector4(0,0,1,0), 
+            Vector4(0,1,0,0)
+        );
+        view_ls = Matrix4x4::LookAt(
+            Vector4(3,0,-1,0), 
+            Vector4(0,0,1,0), 
+            Vector4(0,1,0,0)
+        );
 
-    // Geometry pass pipelines
+        ubo.u_resolution[0] = renderer.window.w;
+        ubo.u_resolution[1] = renderer.window.h;
+        ubo.u_time = 0.0f;
+        ubo.u_view_projection = Matrix4x4::Perspective(45., (float)renderer.window.w/(float)renderer.window.h, 0.1f, 1000.0f) * view;
+        ubo.u_light_view_projection = Matrix4x4::Orthographic(-10, 10, -10, 10, 0.1, 1000) * view_ls;
+        ubo.u_model = model;
+
+        mdAllocateGPUUniformBuffer(sizeof(ubo), p_renderer_state->allocator, uniform_buffer);
+        mdUploadToUniformBuffer(*renderer.context, p_renderer_state->allocator, 0, sizeof(ubo), &ubo, uniform_buffer);
+    }
+    
+    // Geometry pass pipelines    
+    MdMaterial geometry_mat = {}, final_mat = {};
+    MdPipeline geometry_pipeline;
     {   
         MdPipelineGeometryInputState geometry_state = {}; 
         MdPipelineRasterizationState raster_state = {};
@@ -588,7 +660,7 @@ int main()
             EXIT(renderer);
         }
 
-        mdShaderAddBinding(source, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &texture.sampler);
+        mdShaderAddBinding(source, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &teapot.texture.sampler);
         mdShaderAddBinding(source, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &color_attachment->sampler);
         mdShaderAddBinding(source, 2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, &shadow_texture->sampler);
 
@@ -632,7 +704,7 @@ int main()
     mdCreateFinalPassPipeline(renderer, color_attachment, shadow_texture, final_mat);
 
     // Write descriptors
-    mdDescriptorSetWriteImage(renderer, geometry_mat.set, 0, texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    mdDescriptorSetWriteImage(renderer, geometry_mat.set, 0, teapot.texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     mdDescriptorSetWriteImage(renderer, geometry_mat.set, 1, *shadow_texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     
     mdDescriptorSetWriteImage(renderer, final_mat.set, 0, *color_attachment, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -651,7 +723,7 @@ int main()
             cmd, 
             0, 
             1, 
-            &vertex_buffer.buffer, 
+            &teapot.vertex_buffer.buffer, 
             offsets
         );
         vkCmdBindDescriptorSets(
@@ -669,7 +741,7 @@ int main()
             VK_PIPELINE_BIND_POINT_GRAPHICS, 
             p_renderer_state->shadow_pipeline.pipeline
         );
-        vkCmdDraw(cmd, geometry_size, 1, 0, 0);
+        vkCmdDraw(cmd, teapot.geometry_size, 1, 0, 0);
     });
 
     mdAddRenderPassFunction("geometry", [=](VkCommandBuffer cmd, VkFramebuffer fb){
@@ -686,7 +758,7 @@ int main()
             cmd, 
             0, 
             1, 
-            &vertex_buffer.buffer, offsets
+            &teapot.vertex_buffer.buffer, offsets
         );
         vkCmdBindDescriptorSets(
             cmd, 
@@ -703,7 +775,7 @@ int main()
             VK_PIPELINE_BIND_POINT_GRAPHICS, 
             geometry_pipeline.pipeline
         );
-        vkCmdDraw(cmd, geometry_size, 1, 0, 0);
+        vkCmdDraw(cmd, teapot.geometry_size, 1, 0, 0);
     });
 
     mdAddRenderPassFunction("final", [=](VkCommandBuffer cmd, VkFramebuffer fb){
@@ -854,12 +926,11 @@ int main()
     vkDestroySemaphore(renderer.context->device, render_finished, NULL);
     vkDestroyFence(renderer.context->device, in_flight, NULL);
 
-    // Destroy texture
-    mdDestroyTexture(p_renderer_state->allocator, texture);
+    // Destroy Model
+    mdDestroyModel(renderer, teapot);
 
     // Free GPU memory
     mdFreeGPUBuffer(p_renderer_state->allocator, uniform_buffer);
-    mdFreeGPUBuffer(p_renderer_state->allocator, vertex_buffer);
     
     mdDestroyRenderer(renderer);
     return 0;
